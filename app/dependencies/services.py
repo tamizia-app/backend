@@ -1,9 +1,9 @@
 from fastapi import Depends
 
 from app.core.config import Settings, get_settings
-from app.services.azure.ocr import OCRService
-from app.services.azure.speech import PronunciationService
-from app.services.azure.storage import ObjectStorageService
+from app.modules.ai_processing.infrastructure.ocr import OCRService
+from app.modules.ai_processing.infrastructure.speech import PronunciationService
+from app.modules.evidences.infrastructure.storage import ObjectStorageService
 
 
 def get_storage_service(settings: Settings = Depends(get_settings)) -> ObjectStorageService:
