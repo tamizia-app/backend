@@ -1,6 +1,6 @@
 # TamizAI Backend
 
-Backend para un MVP educativo de apoyo al tamizaje temprano de dificultades de lectoescritura. Este sistema **no realiza diagnóstico clínico** y solo entrega indicadores de apoyo para docentes.
+Backend para un MVP educativo de apoyo al tamizaje temprano de dificultades de lectoescritura. Este sistema **no realiza diagnóstico clínico** y solo entrega indicadores de apoyo para docentes. 2
 
 ## Stack
 
