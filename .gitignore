@@ -8,3 +8,6 @@ __pycache__/
 app.db
 local_storage/
 
+__pycache__/
+*.pyc
+build/

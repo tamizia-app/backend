@@ -1,3 +1,6 @@
+from app.iam.infrastructure.models.user_model import UserModel
+from app.iam.infrastructure.models.teacher_model import TeacherModel
+from app.iam.infrastructure.models.refresh_token_model import RefreshTokenModel
 from app.models.audio_sample import AudioSample
 from app.models.audit_log import AuditLog
 from app.models.classroom import Classroom
@@ -21,10 +24,12 @@ __all__ = [
     "OCRAnalysis",
     "PronunciationAnalysis",
     "RefreshToken",
+    "RefreshTokenModel",
     "SessionResult",
     "Student",
+    "TeacherModel",
     "TeacherProfile",
     "User",
+    "UserModel",
     "WritingSample",
 ]
-

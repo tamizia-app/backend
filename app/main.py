@@ -1,8 +1,11 @@
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
 
 from app.api.router import api_router
+from app.iam.application.exceptions import IAMException
 from app.core.config import get_settings
+from app.iam.presentation.routes import router as iam_router
 from app.schemas.common import HealthResponse
 
 
@@ -26,6 +29,15 @@ app.add_middleware(
 )
 
 app.include_router(api_router, prefix=settings.api_v1_prefix)
+app.include_router(iam_router, prefix=settings.api_v1_prefix)
+
+
+@app.exception_handler(IAMException)
+def iam_exception_handler(request: Request, exc: IAMException) -> JSONResponse:
+    return JSONResponse(
+        status_code=exc.status_code,
+        content={"detail": exc.detail},
+    )
 
 
 @app.get("/health", response_model=HealthResponse, tags=["health"])
