@@ -7,8 +7,10 @@ from app.models.classroom import Classroom
 from app.models.exercise import Exercise
 from app.models.ocr_analysis import OCRAnalysis
 from app.models.pronunciation_analysis import PronunciationAnalysis
+from app.models.refresh_token import RefreshToken
 from app.models.session_result import SessionResult
 from app.models.student import Student
+from app.models.teacher_profile import TeacherProfile
 from app.models.user import User
 from app.models.assessment_session import AssessmentSession
 from app.models.writing_sample import WritingSample
@@ -21,10 +23,12 @@ __all__ = [
     "Exercise",
     "OCRAnalysis",
     "PronunciationAnalysis",
+    "RefreshToken",
     "RefreshTokenModel",
     "SessionResult",
     "Student",
     "TeacherModel",
+    "TeacherProfile",
     "User",
     "UserModel",
     "WritingSample",
