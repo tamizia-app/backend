@@ -23,18 +23,4 @@ class IamUserFacade(UserManagementPort):
         )
 
     def update_user(self, user_id: UUID, name: str, lastname: str, email: str) -> None:
-        user = self._user_repo.find_by_id(user_id)
-        if user:
-            from app.iam.infrastructure.models.user_model import UserModel
-            from app.db.session import SessionLocal
-
-            db = SessionLocal()
-            try:
-                model = db.get(UserModel, user_id)
-                if model:
-                    model.name = name
-                    model.lastname = lastname
-                    model.email = email
-                    db.commit()
-            finally:
-                db.close()
+        self._user_repo.update(user_id, name, lastname, email)

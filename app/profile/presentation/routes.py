@@ -1,13 +1,9 @@
-from uuid import UUID
-
-from fastapi import APIRouter, Depends, status
+from fastapi import APIRouter, Depends
 from sqlalchemy.orm import Session
 
-from app.core.config import get_settings
 from app.db.session import get_db
 from app.dependencies.auth import get_current_user
 from app.iam.infrastructure.models.user_model import UserModel
-from app.profile.application.exceptions.profile_exceptions import ProfileException
 from app.profile.application.ports.repositories import TeacherRepository
 from app.profile.application.ports.user_management_port import UserManagementPort
 from app.profile.application.use_cases.get_teacher import GetTeacherUseCase
@@ -51,17 +47,15 @@ def get_my_teacher_profile(
     )
 
 
-@router.put("/{teacher_id}", response_model=TeacherResponse)
-def update_teacher(
-    teacher_id: str,
+@router.put("/me", response_model=TeacherResponse)
+def update_my_teacher_profile(
     request: UpdateTeacherRequest,
     db: Session = Depends(get_db),
     current_user: UserModel = Depends(get_current_user),
 ) -> TeacherResponse:
-    tid = UUID(teacher_id)
     _, update_uc = _build_use_cases(db)
     command = UpdateTeacherCommand(
-        teacher_id=tid,
+        user_id=current_user.id,
         name=request.name,
         lastname=request.lastname,
         email=request.email,

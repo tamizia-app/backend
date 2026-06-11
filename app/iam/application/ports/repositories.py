@@ -20,6 +20,9 @@ class UserRepository(ABC):
     @abstractmethod
     def exists_by_email(self, email: str) -> bool: ...
 
+    @abstractmethod
+    def update(self, user_id: UUID, name: str, lastname: str, email: str) -> User | None: ...
+
 
 class RefreshTokenRepository(ABC):
     @abstractmethod

@@ -14,7 +14,7 @@ from app.profile.domain.teacher import Teacher
 
 @dataclass
 class UpdateTeacherCommand:
-    teacher_id: UUID
+    user_id: UUID
     name: str
     lastname: str
     email: str
@@ -32,12 +32,12 @@ class UpdateTeacherProfileUseCase:
         self._user_management = user_management
 
     def execute(self, command: UpdateTeacherCommand) -> TeacherResult:
-        existing = self._teacher_repo.find_by_id(command.teacher_id)
+        existing = self._teacher_repo.find_by_user_id(command.user_id)
         if not existing:
             raise TeacherNotFoundError()
 
         self._user_management.update_user(
-            existing.user_id,
+            command.user_id,
             name=command.name,
             lastname=command.lastname,
             email=command.email,
@@ -54,7 +54,7 @@ class UpdateTeacherProfileUseCase:
             )
         )
 
-        user = self._user_management.get_user(existing.user_id)
+        user = self._user_management.get_user(command.user_id)
         if not user:
             raise UserNotFoundError()
 

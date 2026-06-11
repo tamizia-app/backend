@@ -19,7 +19,7 @@ class SQLAlchemyUserRepository(UserRepositoryPort):
         return ModelMapper.user_to_domain(model) if model else None
 
     def find_by_id(self, user_id: UUID) -> User | None:
-        model = self._db.scalar(select(UserModel).where(UserModel.id == user_id))
+        model = self._db.get(UserModel, user_id)
         return ModelMapper.user_to_domain(model) if model else None
 
     def create(self, command: CreateUserCommand) -> User:
@@ -35,3 +35,13 @@ class SQLAlchemyUserRepository(UserRepositoryPort):
 
     def exists_by_email(self, email: str) -> bool:
         return self._db.scalar(select(UserModel.id).where(UserModel.email == email)) is not None
+
+    def update(self, user_id: UUID, name: str, lastname: str, email: str) -> User | None:
+        model = self._db.get(UserModel, user_id)
+        if not model:
+            return None
+        model.name = name
+        model.lastname = lastname
+        model.email = email
+        self._db.flush()
+        return ModelMapper.user_to_domain(model)
