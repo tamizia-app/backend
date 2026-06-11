@@ -7,7 +7,7 @@ from sqlalchemy.orm import Session
 
 from app.db.session import get_db
 from app.dependencies.auth import get_current_user
-from app.models.user import User
+from app.iam.infrastructure.models.user_model import UserModel
 from app.modules.students.application.commands.student_commands import UpdateStudentCommand
 from app.modules.students.application.queries.student_queries import GetStudentQuery, ListStudentSessionsQuery
 from app.modules.students.application.services import GetStudentUseCase, ListStudentSessionsUseCase, UpdateStudentUseCase
@@ -53,7 +53,7 @@ def _raise_http_error(error: StudentError) -> None:
 def get_student(
     student_id: UUID,
     repository: SQLAlchemyStudentRepository = Depends(get_student_repository),
-    current_user: User = Depends(get_current_user),
+    current_user: UserModel = Depends(get_current_user),
 ) -> StudentResponse:
     try:
         return GetStudentUseCase(repository).execute(GetStudentQuery(student_id=student_id, current_user=current_user))
@@ -66,7 +66,7 @@ def update_student(
     student_id: UUID,
     payload: StudentUpdate,
     db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user),
+    current_user: UserModel = Depends(get_current_user),
 ) -> StudentResponse:
     repository = SQLAlchemyStudentRepository(db)
     try:
@@ -89,7 +89,7 @@ def update_student(
 def list_sessions_by_student(
     student_id: UUID,
     repository: SQLAlchemyStudentRepository = Depends(get_student_repository),
-    current_user: User = Depends(get_current_user),
+    current_user: UserModel = Depends(get_current_user),
 ) -> list[SessionResponse]:
     try:
         return ListStudentSessionsUseCase(repository).execute(

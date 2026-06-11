@@ -1,10 +1,12 @@
+from app.iam.infrastructure.models.user_model import UserModel
+from app.iam.infrastructure.models.refresh_token_model import RefreshTokenModel
+from app.profile.infrastructure.models.teacher_model import TeacherModel
 from app.models.audio_sample import AudioSample
 from app.models.audit_log import AuditLog
 from app.models.classroom import Classroom
 from app.models.exercise import Exercise
 from app.models.ocr_analysis import OCRAnalysis
 from app.models.pronunciation_analysis import PronunciationAnalysis
-from app.models.refresh_token import RefreshToken
 from app.models.session_result import SessionResult
 from app.models.student import Student
 from app.models.teacher_profile import TeacherProfile
@@ -20,11 +22,12 @@ __all__ = [
     "Exercise",
     "OCRAnalysis",
     "PronunciationAnalysis",
-    "RefreshToken",
+    "RefreshTokenModel",
     "SessionResult",
     "Student",
+    "TeacherModel",
     "TeacherProfile",
     "User",
+    "UserModel",
     "WritingSample",
 ]
-
