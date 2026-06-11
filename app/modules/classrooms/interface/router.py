@@ -7,7 +7,7 @@ from sqlalchemy.orm import Session
 
 from app.db.session import get_db
 from app.dependencies.auth import get_current_user
-from app.models.user import User
+from app.iam.infrastructure.models.user_model import UserModel
 from app.modules.classrooms.application.commands.classroom_commands import CreateClassroomCommand, UpdateClassroomCommand
 from app.modules.classrooms.application.queries.classroom_queries import GetClassroomQuery, ListClassroomsQuery
 from app.modules.classrooms.application.services import (
@@ -59,7 +59,7 @@ def _classroom_data_from_payload(payload: ClassroomCreate) -> ClassroomData:
 @router.get("", response_model=list[ClassroomResponse])
 def list_classrooms(
     repository: SQLAlchemyClassroomRepository = Depends(get_classroom_repository),
-    current_user: User = Depends(get_current_user),
+    current_user: UserModel = Depends(get_current_user),
 ) -> list[ClassroomResponse]:
     try:
         return ListClassroomsUseCase(repository).execute(ListClassroomsQuery(current_user=current_user))
@@ -71,7 +71,7 @@ def list_classrooms(
 def create_classroom(
     payload: ClassroomCreate,
     db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user),
+    current_user: UserModel = Depends(get_current_user),
 ) -> ClassroomResponse:
     repository = SQLAlchemyClassroomRepository(db)
     try:
@@ -93,7 +93,7 @@ def create_classroom(
 def get_classroom(
     classroom_id: UUID,
     repository: SQLAlchemyClassroomRepository = Depends(get_classroom_repository),
-    current_user: User = Depends(get_current_user),
+    current_user: UserModel = Depends(get_current_user),
 ) -> ClassroomResponse:
     try:
         return GetClassroomUseCase(repository).execute(
@@ -108,7 +108,7 @@ def update_classroom(
     classroom_id: UUID,
     payload: ClassroomUpdate,
     db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user),
+    current_user: UserModel = Depends(get_current_user),
 ) -> ClassroomResponse:
     repository = SQLAlchemyClassroomRepository(db)
     try:
@@ -131,7 +131,7 @@ def update_classroom(
 def list_students_by_classroom(
     classroom_id: UUID,
     db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user),
+    current_user: UserModel = Depends(get_current_user),
 ) -> list[StudentResponse]:
     return student_service.list_students_by_classroom(db, classroom_id=classroom_id, current_user=current_user)
 
@@ -141,7 +141,7 @@ def create_student(
     classroom_id: UUID,
     payload: StudentCreate,
     db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user),
+    current_user: UserModel = Depends(get_current_user),
 ) -> StudentResponse:
     student = student_service.create_student(db, classroom_id=classroom_id, current_user=current_user, payload=payload)
     db.commit()

@@ -10,7 +10,7 @@ from sqlalchemy.orm import Session
 from app.core.config import Settings, get_settings
 from app.core.security import decode_access_token
 from app.db.session import get_db
-from app.models.user import User
+from app.iam.infrastructure.models.user_model import UserModel
 
 
 bearer_scheme = HTTPBearer(auto_error=False)
@@ -20,7 +20,7 @@ def get_current_user(
     credentials: HTTPAuthorizationCredentials | None = Depends(bearer_scheme),
     db: Session = Depends(get_db),
     settings: Settings = Depends(get_settings),
-) -> User:
+) -> UserModel:
     if credentials is None:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Authentication required.")
 
@@ -37,7 +37,7 @@ def get_current_user(
     except (KeyError, ValueError) as exc:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid access token.") from exc
 
-    user = db.get(User, user_id)
+    user = db.get(UserModel, user_id)
     if not user or not user.is_active:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Inactive or missing user.")
     return user

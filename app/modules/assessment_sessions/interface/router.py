@@ -8,7 +8,7 @@ from sqlalchemy.orm import Session
 from app.db.session import get_db
 from app.dependencies.auth import get_current_user
 from app.dependencies.services import get_ocr_service, get_pronunciation_service, get_storage_service
-from app.models.user import User
+from app.iam.infrastructure.models.user_model import UserModel
 from app.modules.assessment_sessions.application.commands.cancel_session import CancelSessionCommand, CancelSessionUseCase
 from app.modules.assessment_sessions.application.commands.complete_session import CompleteSessionCommand, CompleteSessionUseCase
 from app.modules.assessment_sessions.application.commands.create_session import CreateSessionCommand, CreateSessionUseCase
@@ -97,7 +97,7 @@ def _build_session_detail(session) -> SessionDetailResponse:
     )
 
 
-def _get_session_or_http(repository: SQLAlchemyAssessmentSessionRepository, *, session_id: UUID, current_user: User):
+def _get_session_or_http(repository: SQLAlchemyAssessmentSessionRepository, *, session_id: UUID, current_user: UserModel):
     try:
         return GetSessionUseCase(repository).execute(GetSessionQuery(session_id=session_id, current_user=current_user))
     except AssessmentSessionError as error:
@@ -108,7 +108,7 @@ def _get_session_or_http(repository: SQLAlchemyAssessmentSessionRepository, *, s
 def create_session(
     payload: SessionCreate,
     db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user),
+    current_user: UserModel = Depends(get_current_user),
 ) -> SessionResponse:
     repository = SQLAlchemyAssessmentSessionRepository(db)
     try:
@@ -131,7 +131,7 @@ def create_session(
 def get_session(
     session_id: UUID,
     repository: SQLAlchemyAssessmentSessionRepository = Depends(get_session_repository),
-    current_user: User = Depends(get_current_user),
+    current_user: UserModel = Depends(get_current_user),
 ) -> SessionDetailResponse:
     session = _get_session_or_http(repository, session_id=session_id, current_user=current_user)
     return _build_session_detail(session)
@@ -141,7 +141,7 @@ def get_session(
 def start_session(
     session_id: UUID,
     db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user),
+    current_user: UserModel = Depends(get_current_user),
 ) -> SessionUpdateStateResponse:
     repository = SQLAlchemyAssessmentSessionRepository(db)
     try:
@@ -156,7 +156,7 @@ def start_session(
 def complete_session(
     session_id: UUID,
     db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user),
+    current_user: UserModel = Depends(get_current_user),
 ) -> SessionUpdateStateResponse:
     repository = SQLAlchemyAssessmentSessionRepository(db)
     try:
@@ -173,7 +173,7 @@ def complete_session(
 def cancel_session(
     session_id: UUID,
     db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user),
+    current_user: UserModel = Depends(get_current_user),
 ) -> SessionUpdateStateResponse:
     repository = SQLAlchemyAssessmentSessionRepository(db)
     try:
@@ -193,7 +193,7 @@ async def upload_writing_sample(
     correction_count: int | None = Form(default=None),
     duration_seconds: int | None = Form(default=None),
     db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user),
+    current_user: UserModel = Depends(get_current_user),
     storage_service: ObjectStorageService = Depends(get_storage_service),
 ) -> WritingSampleResponse:
     session = _get_session_or_http(SQLAlchemyAssessmentSessionRepository(db), session_id=session_id, current_user=current_user)
@@ -226,7 +226,7 @@ async def upload_audio_sample(
     locale: str = Form(default="es-CO"),
     duration_seconds: int | None = Form(default=None),
     db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user),
+    current_user: UserModel = Depends(get_current_user),
     storage_service: ObjectStorageService = Depends(get_storage_service),
 ) -> AudioSampleResponse:
     session = _get_session_or_http(SQLAlchemyAssessmentSessionRepository(db), session_id=session_id, current_user=current_user)
@@ -251,7 +251,7 @@ async def upload_audio_sample(
 def analyze_writing(
     session_id: UUID,
     db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user),
+    current_user: UserModel = Depends(get_current_user),
     ocr_service: OCRService = Depends(get_ocr_service),
 ) -> WritingAnalyzeResponse:
     session = _get_session_or_http(SQLAlchemyAssessmentSessionRepository(db), session_id=session_id, current_user=current_user)
@@ -272,7 +272,7 @@ def analyze_writing(
 def analyze_reading(
     session_id: UUID,
     db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user),
+    current_user: UserModel = Depends(get_current_user),
     pronunciation_service: PronunciationService = Depends(get_pronunciation_service),
 ) -> ReadingAnalyzeResponse:
     session = _get_session_or_http(SQLAlchemyAssessmentSessionRepository(db), session_id=session_id, current_user=current_user)
@@ -293,7 +293,7 @@ def analyze_reading(
 def generate_result(
     session_id: UUID,
     db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user),
+    current_user: UserModel = Depends(get_current_user),
 ) -> GenerateResultResponse:
     session = _get_session_or_http(SQLAlchemyAssessmentSessionRepository(db), session_id=session_id, current_user=current_user)
     try:
@@ -311,7 +311,7 @@ def generate_result(
 def get_result(
     session_id: UUID,
     db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user),
+    current_user: UserModel = Depends(get_current_user),
 ) -> SessionResultResponse:
     session = _get_session_or_http(SQLAlchemyAssessmentSessionRepository(db), session_id=session_id, current_user=current_user)
     try:
