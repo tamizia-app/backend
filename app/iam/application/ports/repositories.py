@@ -1,11 +1,9 @@
 from abc import ABC, abstractmethod
 from uuid import UUID
 
-from app.iam.application.commands.create_user import CreateUserCommand
 from app.iam.application.commands.create_refresh_token import CreateRefreshTokenCommand
-from app.iam.application.commands.signup import SignupCommand
+from app.iam.application.commands.create_user import CreateUserCommand
 from app.iam.domain.refresh_token import RefreshToken
-from app.iam.domain.teacher import Teacher
 from app.iam.domain.user import User
 
 
@@ -21,17 +19,6 @@ class UserRepository(ABC):
 
     @abstractmethod
     def exists_by_email(self, email: str) -> bool: ...
-
-
-class TeacherRepository(ABC):
-    @abstractmethod
-    def find_by_phone(self, phone: str) -> Teacher | None: ...
-
-    @abstractmethod
-    def create(self, command: SignupCommand) -> Teacher: ...
-
-    @abstractmethod
-    def exists_by_phone(self, phone: str) -> bool: ...
 
 
 class RefreshTokenRepository(ABC):

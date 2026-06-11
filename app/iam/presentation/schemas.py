@@ -1,6 +1,3 @@
-from datetime import datetime
-from uuid import UUID
-
 from pydantic import BaseModel, EmailStr, Field
 
 
@@ -9,19 +6,8 @@ class SignupRequest(BaseModel):
     lastname: str = Field(min_length=1, max_length=255)
     email: EmailStr
     password: str = Field(min_length=8, max_length=128)
-    institute_name: str | None = None
-    phone: str | None = None
-
-
-class SignupResponse(BaseModel):
-    user_id: UUID
-    teacher_id: UUID
-    name: str
-    lastname: str
-    email: str
-    institute_name: str | None
-    phone: str | None
-    created_at: datetime
+    institute_name: str = Field(min_length=1, max_length=255)
+    phone: str = Field(min_length=1, max_length=50)
 
 
 class SigninRequest(BaseModel):

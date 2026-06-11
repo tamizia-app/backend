@@ -1,7 +1,7 @@
 from datetime import UTC, datetime
 
 from sqlalchemy import DateTime, ForeignKey, String, Uuid, func
-from sqlalchemy.orm import Mapped, mapped_column, relationship
+from sqlalchemy.orm import Mapped, mapped_column
 
 from app.models.base import Base, UUIDPrimaryKeyMixin
 
@@ -25,5 +25,3 @@ class TeacherModel(UUIDPrimaryKeyMixin, Base):
         server_default=func.now(),
         onupdate=lambda: datetime.now(UTC),
     )
-
-    user = relationship("UserModel", back_populates="teacher")

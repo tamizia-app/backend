@@ -26,7 +26,6 @@ class UserModel(UUIDPrimaryKeyMixin, Base):
         onupdate=lambda: datetime.now(UTC),
     )
 
-    teacher = relationship("TeacherModel", back_populates="user", uselist=False)
     refresh_tokens = relationship("RefreshTokenModel", back_populates="user")
 
     @property
@@ -36,7 +35,3 @@ class UserModel(UUIDPrimaryKeyMixin, Base):
     @property
     def full_name(self) -> str:
         return f"{self.name} {self.lastname}"
-
-    @property
-    def teacher_profile(self):
-        return self.teacher

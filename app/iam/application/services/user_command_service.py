@@ -10,6 +10,7 @@ from app.iam.application.context.signin_context import SigninContext
 from app.iam.application.context.signout_context import SignoutContext
 from app.iam.application.context.signup_context import SignupContext
 from app.iam.application.exceptions import (
+    AlreadyExistsException,
     InactiveUserException,
     InvalidCredentialsException,
 )
@@ -36,6 +37,39 @@ class UserCommandServiceImpl:
     ) -> None:
         self._user_repo = user_repo
         self._refresh_token_repo = refresh_token_repo
+
+    def signup(self, context: SignupContext, settings: Settings) -> tuple[str, str, int]:
+        UserValidator.validate_signup(context)
+
+        if self._user_repo.exists_by_email(context.email):
+            raise AlreadyExistsException("A user with this email already exists.")
+
+        user = self._user_repo.create(
+            CreateUserCommand(
+                name=context.name,
+                lastname=context.lastname,
+                email=context.email,
+                password_hash=hash_password(context.password),
+            )
+        )
+
+        expires_in = int(timedelta(hours=8).total_seconds())
+        access_token = create_access_token(
+            subject=str(user.id),
+            settings=settings,
+            expires_delta=timedelta(hours=8),
+        )
+
+        raw_refresh_token = generate_refresh_token()
+        token_hash = hash_refresh_token(raw_refresh_token, settings)
+        self._refresh_token_repo.create(
+            CreateRefreshTokenCommand(
+                user_id=user.id,
+                token_hash=token_hash,
+            )
+        )
+
+        return access_token, raw_refresh_token, expires_in
 
     def ensure_user(self, context: SignupContext) -> UUID:
         UserValidator.validate_signup(context)

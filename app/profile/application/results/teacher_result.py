@@ -3,7 +3,10 @@ from uuid import UUID
 
 
 @dataclass
-class SignupCommand:
-    user_id: UUID
+class TeacherResult:
+    teacher_id: UUID
+    name: str
+    lastname: str
+    email: str
     institute_name: str | None
     phone: str | None

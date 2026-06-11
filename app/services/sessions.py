@@ -12,7 +12,7 @@ from app.models.assessment_session import AssessmentSession
 from app.models.ocr_analysis import OCRAnalysis
 from app.models.pronunciation_analysis import PronunciationAnalysis
 from app.models.session_result import SessionResult
-from app.models.user import User
+from app.iam.infrastructure.models.user_model import UserModel
 from app.modules.ai_processing.application.process_reading_pronunciation import (
     ProcessReadingPronunciationCommand,
     ProcessReadingPronunciationUseCase,

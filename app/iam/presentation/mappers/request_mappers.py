@@ -18,8 +18,6 @@ class RequestMapper:
             lastname=request.lastname,
             email=request.email,
             password=request.password,
-            institute_name=request.institute_name,
-            phone=request.phone,
         )
 
     @staticmethod

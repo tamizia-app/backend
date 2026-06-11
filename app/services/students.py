@@ -4,7 +4,7 @@ from fastapi import HTTPException, status
 from sqlalchemy.orm import Session
 
 from app.models.student import Student
-from app.models.user import User
+from app.iam.infrastructure.models.user_model import UserModel
 from app.modules.students.application.commands.student_commands import CreateStudentCommand, UpdateStudentCommand
 from app.modules.students.application.queries.student_queries import GetStudentQuery, ListStudentsByClassroomQuery
 from app.modules.students.application.services import (
