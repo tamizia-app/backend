@@ -13,30 +13,30 @@ from app.models.ocr_analysis import OCRAnalysis
 from app.models.pronunciation_analysis import PronunciationAnalysis
 from app.models.session_result import SessionResult
 from app.iam.infrastructure.models.user_model import UserModel
-from app.modules.ai_processing.application.process_reading_pronunciation import (
+from app.assessment.modules.ai_processing.application.process_reading_pronunciation import (
     ProcessReadingPronunciationCommand,
     ProcessReadingPronunciationUseCase,
 )
-from app.modules.ai_processing.application.process_writing_ocr import ProcessWritingOCRCommand, ProcessWritingOCRUseCase
-from app.modules.ai_processing.domain.exceptions import (
+from app.assessment.modules.ai_processing.application.process_writing_ocr import ProcessWritingOCRCommand, ProcessWritingOCRUseCase
+from app.assessment.modules.ai_processing.domain.exceptions import (
     AIProcessingError,
     AudioSampleRequiredError,
     SessionClosedForAnalysisError,
     WritingSampleRequiredError,
 )
-from app.modules.ai_processing.infrastructure.binary_loader import HTTPOrLocalBinarySourceLoader
-from app.modules.ai_processing.infrastructure.repositories import SQLAlchemyAIProcessingRepository
-from app.modules.assessment_sessions.application.commands.cancel_session import CancelSessionCommand, CancelSessionUseCase
-from app.modules.assessment_sessions.application.commands.complete_session import CompleteSessionCommand, CompleteSessionUseCase
-from app.modules.assessment_sessions.application.commands.create_session import CreateSessionCommand, CreateSessionUseCase
-from app.modules.assessment_sessions.application.commands.start_session import StartSessionCommand, StartSessionUseCase
-from app.modules.assessment_sessions.application.queries.get_session import (
+from app.assessment.modules.ai_processing.infrastructure.binary_loader import HTTPOrLocalBinarySourceLoader
+from app.assessment.modules.ai_processing.infrastructure.repositories import SQLAlchemyAIProcessingRepository
+from app.assessment.modules.assessment_sessions.application.commands.cancel_session import CancelSessionCommand, CancelSessionUseCase
+from app.assessment.modules.assessment_sessions.application.commands.complete_session import CompleteSessionCommand, CompleteSessionUseCase
+from app.assessment.modules.assessment_sessions.application.commands.create_session import CreateSessionCommand, CreateSessionUseCase
+from app.assessment.modules.assessment_sessions.application.commands.start_session import StartSessionCommand, StartSessionUseCase
+from app.assessment.modules.assessment_sessions.application.queries.get_session import (
     GetSessionQuery,
     GetSessionUseCase,
     ListSessionsByStudentQuery,
     ListSessionsByStudentUseCase,
 )
-from app.modules.assessment_sessions.domain.exceptions import (
+from app.assessment.modules.assessment_sessions.domain.exceptions import (
     AssessmentSessionError,
     ExerciseNotFoundError,
     InvalidSessionStateError,
@@ -46,15 +46,15 @@ from app.modules.assessment_sessions.domain.exceptions import (
     StudentNotFoundError,
     TeacherProfileMissingError,
 )
-from app.modules.assessment_sessions.infrastructure.repositories import SQLAlchemyAssessmentSessionRepository
-from app.modules.evidences.application.upload_audio_evidence import UploadAudioEvidenceCommand, UploadAudioEvidenceUseCase
-from app.modules.evidences.application.upload_writing_evidence import UploadWritingEvidenceCommand, UploadWritingEvidenceUseCase
-from app.modules.evidences.domain.entities import AudioEvidenceMetadata, EvidenceFile, WritingEvidenceMetadata
-from app.modules.evidences.domain.exceptions import EvidenceError, SessionClosedForEvidenceError
-from app.modules.evidences.infrastructure.repositories import SQLAlchemyEvidenceRepository
-from app.modules.results.application.generate_result import GenerateResultCommand, GenerateResultUseCase
-from app.modules.results.domain.exceptions import AnalysisRequiredError, ResultError
-from app.modules.results.infrastructure.repositories import SQLAlchemyResultRepository
+from app.assessment.modules.assessment_sessions.infrastructure.repositories import SQLAlchemyAssessmentSessionRepository
+from app.assessment.modules.evidences.application.upload_audio_evidence import UploadAudioEvidenceCommand, UploadAudioEvidenceUseCase
+from app.assessment.modules.evidences.application.upload_writing_evidence import UploadWritingEvidenceCommand, UploadWritingEvidenceUseCase
+from app.assessment.modules.evidences.domain.entities import AudioEvidenceMetadata, EvidenceFile, WritingEvidenceMetadata
+from app.assessment.modules.evidences.domain.exceptions import EvidenceError, SessionClosedForEvidenceError
+from app.assessment.modules.evidences.infrastructure.repositories import SQLAlchemyEvidenceRepository
+from app.assessment.modules.results.application.generate_result import GenerateResultCommand, GenerateResultUseCase
+from app.assessment.modules.results.domain.exceptions import AnalysisRequiredError, ResultError
+from app.assessment.modules.results.infrastructure.repositories import SQLAlchemyResultRepository
 from app.schemas.session import SessionCreate
 from app.services.azure.ocr import OCRService
 from app.services.azure.speech import PronunciationService

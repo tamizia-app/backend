@@ -28,13 +28,13 @@ from app.iam.presentation.schemas import (
     SignupRequest,
     SigninResponse as SignupResponse,
 )
-from app.profile.application.use_cases.create_teacher import (
-    CreateTeacherCommand,
-    CreateTeacherUseCase,
+from app.school.application.use_cases.create_homeroom_teacher import (
+    CreateHomeroomTeacherCommand,
+    CreateHomeroomTeacherUseCase,
 )
-from app.profile.infrastructure.adapters.iam_adapter import IamAdapter
-from app.profile.infrastructure.repositories.teacher_repository import (
-    SQLAlchemyTeacherRepository,
+from app.school.infrastructure.adapters.iam_adapter import IamAdapter
+from app.school.infrastructure.repositories.homeroom_teacher_repository import (
+    SQLAlchemyHomeroomTeacherRepository,
 )
 
 router = APIRouter(prefix="/auth", tags=["auth"])
@@ -59,12 +59,12 @@ def signup(
     user_repo: UserRepository = SQLAlchemyUserRepository(db)
     user = user_repo.find_by_email(context.email)
     if user:
-        create_teacher = CreateTeacherUseCase(
-            teacher_repo=SQLAlchemyTeacherRepository(db),
+        create_teacher = CreateHomeroomTeacherUseCase(
+            teacher_repo=SQLAlchemyHomeroomTeacherRepository(db),
             user_management=IamAdapter(db),
         )
         create_teacher.execute(
-            CreateTeacherCommand(
+            CreateHomeroomTeacherCommand(
                 user_id=user.id,
                 institute_name=request.institute_name,
                 phone=request.phone,

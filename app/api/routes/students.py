@@ -1,1 +1,1 @@
-from app.modules.students.interface.router import router
+from app.school.modules.students.interface.router import router

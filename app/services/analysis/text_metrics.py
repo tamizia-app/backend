@@ -1,4 +1,4 @@
-from app.modules.ai_processing.domain.text_metrics import (
+from app.assessment.modules.ai_processing.domain.text_metrics import (
     build_reading_score,
     build_writing_score,
     calculate_reading_metrics,

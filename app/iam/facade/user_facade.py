@@ -1,7 +1,7 @@
 from uuid import UUID
 
 from app.iam.application.ports.repositories import UserRepository
-from app.profile.application.ports.user_management_port import (
+from app.school.application.ports.user_management_port import (
     UserData,
     UserManagementPort,
 )

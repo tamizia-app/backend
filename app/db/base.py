@@ -1,6 +1,6 @@
 from app.iam.infrastructure.models.user_model import UserModel
 from app.iam.infrastructure.models.refresh_token_model import RefreshTokenModel
-from app.profile.infrastructure.models.teacher_model import TeacherModel
+from app.school.infrastructure.models.homeroom_teacher_model import HomeroomTeacherModel
 from app.models.audio_sample import AudioSample
 from app.models.audit_log import AuditLog
 from app.models.classroom import Classroom
@@ -25,7 +25,7 @@ __all__ = [
     "RefreshTokenModel",
     "SessionResult",
     "Student",
-    "TeacherModel",
+    "HomeroomTeacherModel",
     "TeacherProfile",
     "User",
     "UserModel",

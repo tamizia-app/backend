@@ -5,22 +5,22 @@ from sqlalchemy.orm import Session
 
 from app.models.classroom import Classroom
 from app.iam.infrastructure.models.user_model import UserModel
-from app.modules.classrooms.application.commands.classroom_commands import CreateClassroomCommand, UpdateClassroomCommand
-from app.modules.classrooms.application.queries.classroom_queries import GetClassroomQuery, ListClassroomsQuery
-from app.modules.classrooms.application.services import (
+from app.school.modules.classrooms.application.commands.classroom_commands import CreateClassroomCommand, UpdateClassroomCommand
+from app.school.modules.classrooms.application.queries.classroom_queries import GetClassroomQuery, ListClassroomsQuery
+from app.school.modules.classrooms.application.services import (
     CreateClassroomUseCase,
     GetClassroomUseCase,
     ListClassroomsUseCase,
     UpdateClassroomUseCase,
 )
-from app.modules.classrooms.domain.entities import ClassroomData
-from app.modules.classrooms.domain.exceptions import (
+from app.school.modules.classrooms.domain.entities import ClassroomData
+from app.school.modules.classrooms.domain.exceptions import (
     ClassroomError,
     ClassroomNotBelongsToTeacherError,
     ClassroomNotFoundError,
     TeacherProfileMissingError,
 )
-from app.modules.classrooms.infrastructure.repositories import SQLAlchemyClassroomRepository
+from app.school.modules.classrooms.infrastructure.repositories import SQLAlchemyClassroomRepository
 from app.schemas.classroom import ClassroomCreate, ClassroomUpdate
 
 

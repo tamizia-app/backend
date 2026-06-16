@@ -1,4 +1,4 @@
-from app.modules.assessment_sessions.interface.schemas import (
+from app.assessment.modules.assessment_sessions.interface.schemas import (
     AudioSampleResponse,
     GenerateResultResponse,
     OCRAnalysisResponse,

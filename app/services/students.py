@@ -5,16 +5,16 @@ from sqlalchemy.orm import Session
 
 from app.models.student import Student
 from app.iam.infrastructure.models.user_model import UserModel
-from app.modules.students.application.commands.student_commands import CreateStudentCommand, UpdateStudentCommand
-from app.modules.students.application.queries.student_queries import GetStudentQuery, ListStudentsByClassroomQuery
-from app.modules.students.application.services import (
+from app.school.modules.students.application.commands.student_commands import CreateStudentCommand, UpdateStudentCommand
+from app.school.modules.students.application.queries.student_queries import GetStudentQuery, ListStudentsByClassroomQuery
+from app.school.modules.students.application.services import (
     CreateStudentUseCase,
     GetStudentUseCase,
     ListStudentsByClassroomUseCase,
     UpdateStudentUseCase,
 )
-from app.modules.students.domain.entities import StudentData
-from app.modules.students.domain.exceptions import (
+from app.school.modules.students.domain.entities import StudentData
+from app.school.modules.students.domain.exceptions import (
     ClassroomNotFoundError,
     StudentCodeAlreadyExistsError,
     StudentError,
@@ -22,7 +22,7 @@ from app.modules.students.domain.exceptions import (
     StudentNotFoundError,
     TeacherProfileMissingError,
 )
-from app.modules.students.infrastructure.repositories import SQLAlchemyStudentRepository
+from app.school.modules.students.infrastructure.repositories import SQLAlchemyStudentRepository
 from app.schemas.student import StudentCreate, StudentUpdate
 
 

@@ -6,8 +6,8 @@ from app.api.router import api_router
 from app.iam.application.exceptions import IAMException
 from app.core.config import get_settings
 from app.iam.presentation.routes import router as iam_router
-from app.profile.application.exceptions.profile_exceptions import ProfileException
-from app.profile.presentation.routes import router as profile_router
+from app.school.application.exceptions.school_exceptions import SchoolException
+from app.school.presentation.routes import router as school_router
 from app.schemas.common import HealthResponse
 
 
@@ -32,7 +32,7 @@ app.add_middleware(
 
 app.include_router(api_router, prefix=settings.api_v1_prefix)
 app.include_router(iam_router, prefix=settings.api_v1_prefix)
-app.include_router(profile_router, prefix=settings.api_v1_prefix)
+app.include_router(school_router, prefix=settings.api_v1_prefix)
 
 
 @app.exception_handler(IAMException)
@@ -43,8 +43,8 @@ def iam_exception_handler(request: Request, exc: IAMException) -> JSONResponse:
     )
 
 
-@app.exception_handler(ProfileException)
-def profile_exception_handler(request: Request, exc: ProfileException) -> JSONResponse:
+@app.exception_handler(SchoolException)
+def school_exception_handler(request: Request, exc: SchoolException) -> JSONResponse:
     return JSONResponse(
         status_code=exc.status_code,
         content={"detail": exc.detail},

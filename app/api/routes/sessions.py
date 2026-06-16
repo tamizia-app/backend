@@ -1,1 +1,1 @@
-from app.modules.assessment_sessions.interface.router import router
+from app.assessment.modules.assessment_sessions.interface.router import router
