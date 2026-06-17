@@ -7,7 +7,7 @@ WORKDIR /app
 
 COPY . .
 
-RUN pip install --no-cache-dir --upgrade pip && pip install --no-cache-dir .
+RUN pip install --no-cache-dir --default-timeout=120 --upgrade "pip<25.0" && pip install --no-cache-dir --default-timeout=120 .
 
 EXPOSE 8000
 

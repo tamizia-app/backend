@@ -13,5 +13,4 @@ class TeacherProfile(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     phone: Mapped[str | None] = mapped_column(String(50))
 
     user = relationship("User", back_populates="teacher_profile")
-    classrooms = relationship("Classroom", back_populates="teacher_profile")
     sessions = relationship("AssessmentSession", back_populates="teacher_profile")

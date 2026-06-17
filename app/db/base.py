@@ -1,9 +1,9 @@
 from app.iam.infrastructure.models.user_model import UserModel
 from app.iam.infrastructure.models.refresh_token_model import RefreshTokenModel
 from app.school.infrastructure.models.homeroom_teacher_model import HomeroomTeacherModel
+from app.school.infrastructure.models.classroom_model import ClassroomModel
 from app.models.audio_sample import AudioSample
 from app.models.audit_log import AuditLog
-from app.models.classroom import Classroom
 from app.models.exercise import Exercise
 from app.models.ocr_analysis import OCRAnalysis
 from app.models.pronunciation_analysis import PronunciationAnalysis
@@ -18,7 +18,7 @@ __all__ = [
     "AssessmentSession",
     "AudioSample",
     "AuditLog",
-    "Classroom",
+    "ClassroomModel",
     "Exercise",
     "OCRAnalysis",
     "PronunciationAnalysis",

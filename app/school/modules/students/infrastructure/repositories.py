@@ -6,7 +6,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.models.assessment_session import AssessmentSession
-from app.models.classroom import Classroom
+from app.school.infrastructure.models.classroom_model import ClassroomModel
 from app.school.modules.students.domain.entities import StudentData
 from app.school.modules.students.infrastructure.models import Student
 from app.services.audit import create_audit_log
@@ -16,8 +16,8 @@ class SQLAlchemyStudentRepository:
     def __init__(self, db: Session) -> None:
         self.db = db
 
-    def get_classroom(self, classroom_id: UUID) -> Classroom | None:
-        return self.db.get(Classroom, classroom_id)
+    def get_classroom(self, classroom_id: UUID) -> ClassroomModel | None:
+        return self.db.get(ClassroomModel, classroom_id)
 
     def list_by_classroom(self, classroom_id: UUID) -> list[Student]:
         query = select(Student).where(Student.classroom_id == classroom_id).order_by(Student.created_at.desc())

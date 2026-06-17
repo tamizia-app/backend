@@ -6,7 +6,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session, joinedload
 
 from app.models.audio_sample import AudioSample
-from app.models.classroom import Classroom
+from app.school.infrastructure.models.classroom_model import ClassroomModel
 from app.models.exercise import Exercise
 from app.models.student import Student
 from app.models.writing_sample import WritingSample
@@ -22,8 +22,8 @@ class SQLAlchemyAssessmentSessionRepository:
     def get_student(self, student_id: UUID) -> Student | None:
         return self.db.get(Student, student_id)
 
-    def get_student_classroom(self, student: Student) -> Classroom | None:
-        return self.db.get(Classroom, student.classroom_id)
+    def get_student_classroom(self, student: Student) -> ClassroomModel | None:
+        return self.db.get(ClassroomModel, student.classroom_id)
 
     def get_exercise(self, exercise_id: UUID) -> Exercise | None:
         return self.db.get(Exercise, exercise_id)
