@@ -45,3 +45,9 @@ class SQLAlchemyUserRepository(UserRepositoryPort):
         model.email = email
         self._db.flush()
         return ModelMapper.user_to_domain(model)
+
+    def update_password(self, user_id: UUID, new_password_hash: str) -> None:
+        model = self._db.get(UserModel, user_id)
+        if model:
+            model.password_hash = new_password_hash
+            self._db.flush()

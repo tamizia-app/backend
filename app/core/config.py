@@ -31,6 +31,14 @@ class Settings(BaseSettings):
     azure_speech_key: str | None = None
     azure_speech_region: str | None = None
 
+    smtp_host: str = "localhost"
+    smtp_port: int = 587
+    smtp_username: str | None = None
+    smtp_password: str | None = None
+    smtp_use_tls: bool = True
+    email_from: str = "noreply@tamizai.com"
+    reset_token_expire_minutes: int = 5
+
 
 @lru_cache
 def get_settings() -> Settings:

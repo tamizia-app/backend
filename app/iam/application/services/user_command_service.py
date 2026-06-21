@@ -1,11 +1,18 @@
-from datetime import timedelta
+import secrets
+from datetime import UTC, datetime, timedelta
 from uuid import UUID
 
+from app.core.email import send_email
+from app.iam.application.commands.create_password_reset_token import (
+    CreatePasswordResetTokenCommand,
+)
 from app.iam.application.commands.create_refresh_token import (
     CreateRefreshTokenCommand,
 )
 from app.iam.application.commands.create_user import CreateUserCommand
+from app.iam.application.context.forgot_password_context import ForgotPasswordContext
 from app.iam.application.context.refresh_context import RefreshContext
+from app.iam.application.context.reset_password_context import ResetPasswordContext
 from app.iam.application.context.signin_context import SigninContext
 from app.iam.application.context.signout_context import SignoutContext
 from app.iam.application.context.signup_context import SignupContext
@@ -13,8 +20,10 @@ from app.iam.application.exceptions import (
     AlreadyExistsException,
     InactiveUserException,
     InvalidCredentialsException,
+    NotFoundException,
 )
 from app.iam.application.ports.repositories import (
+    PasswordResetTokenRepository,
     RefreshTokenRepository,
     UserRepository,
 )
@@ -34,9 +43,11 @@ class UserCommandServiceImpl:
         self,
         user_repo: UserRepository,
         refresh_token_repo: RefreshTokenRepository,
+        password_reset_repo: PasswordResetTokenRepository | None = None,
     ) -> None:
         self._user_repo = user_repo
         self._refresh_token_repo = refresh_token_repo
+        self._password_reset_repo = password_reset_repo
 
     def signup(self, context: SignupContext, settings: Settings) -> tuple[str, str, int]:
         UserValidator.validate_signup(context)
@@ -164,3 +175,47 @@ class UserCommandServiceImpl:
         stored = self._refresh_token_repo.find_by_hash(token_hash)
         if stored and stored.revoked_at is None:
             self._refresh_token_repo.revoke(stored.id)
+
+    def forgot_password(self, context: ForgotPasswordContext, settings: Settings) -> None:
+        user = self._user_repo.find_by_email(context.email)
+        if not user:
+            raise NotFoundException("No user found with this email.")
+
+        raw_token = secrets.token_urlsafe(48)
+        token_hash = hash_refresh_token(raw_token, settings)
+        expires_at = datetime.now(UTC) + timedelta(minutes=settings.reset_token_expire_minutes)
+
+        if self._password_reset_repo:
+            self._password_reset_repo.create(
+                CreatePasswordResetTokenCommand(
+                    user_id=user.id,
+                    token_hash=token_hash,
+                    expires_at=expires_at,
+                )
+            )
+
+        reset_link = f"{raw_token}"
+        body = (
+            f"Hello,\n\n"
+            f"You requested a password reset. Use this token:\n\n{raw_token}\n\n"
+            f"It expires in {settings.reset_token_expire_minutes} minutes.\n\n"
+            f"If you did not request this, ignore this email."
+        )
+        send_email(to=user.email, subject="Password Reset", body=body, settings=settings)
+
+    def reset_password(self, context: ResetPasswordContext, settings: Settings) -> None:
+        if not context.new_password or len(context.new_password) < 8:
+            raise InvalidCredentialsException("Password must be at least 8 characters.")
+
+        token_hash = hash_refresh_token(context.token, settings)
+
+        if not self._password_reset_repo:
+            raise NotFoundException("Password reset not available.")
+
+        stored = self._password_reset_repo.find_valid_by_hash(token_hash)
+        if not stored:
+            raise InvalidCredentialsException("Invalid or expired reset token.")
+
+        new_hash = hash_password(context.new_password)
+        self._user_repo.update_password(stored.user_id, new_hash)
+        self._password_reset_repo.mark_used(stored.id)

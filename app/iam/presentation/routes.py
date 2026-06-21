@@ -5,11 +5,15 @@ from app.core.config import Settings, get_settings
 from app.db.session import get_db
 from app.iam.application.assemblers.auth_assembler import AuthAssembler
 from app.iam.application.ports.repositories import (
+    PasswordResetTokenRepository,
     RefreshTokenRepository,
     UserRepository,
 )
 from app.iam.application.services.user_command_service import (
     UserCommandServiceImpl,
+)
+from app.iam.infrastructure.repositories.password_reset_token_repository import (
+    SQLAlchemyPasswordResetTokenRepository,
 )
 from app.iam.infrastructure.repositories.refresh_token_repository import (
     SQLAlchemyRefreshTokenRepository,
@@ -19,8 +23,12 @@ from app.iam.infrastructure.repositories.user_repository import (
 )
 from app.iam.presentation.mappers.request_mappers import RequestMapper
 from app.iam.presentation.schemas import (
+    ForgotPasswordRequest,
+    ForgotPasswordResponse,
     RefreshRequest,
     RefreshResponse,
+    ResetPasswordRequest,
+    ResetPasswordResponse,
     SigninRequest,
     SigninResponse,
     SignoutRequest,
@@ -43,7 +51,12 @@ router = APIRouter(prefix="/auth", tags=["auth"])
 def _build_service(db: Session) -> UserCommandServiceImpl:
     user_repo: UserRepository = SQLAlchemyUserRepository(db)
     refresh_repo: RefreshTokenRepository = SQLAlchemyRefreshTokenRepository(db)
-    return UserCommandServiceImpl(user_repo=user_repo, refresh_token_repo=refresh_repo)
+    reset_repo: PasswordResetTokenRepository = SQLAlchemyPasswordResetTokenRepository(db)
+    return UserCommandServiceImpl(
+        user_repo=user_repo,
+        refresh_token_repo=refresh_repo,
+        password_reset_repo=reset_repo,
+    )
 
 
 @router.post("/signup", response_model=SignupResponse, status_code=status.HTTP_201_CREATED)
@@ -131,3 +144,29 @@ def signout(
     db.commit()
     result = AuthAssembler.to_signout_result()
     return SignoutResponse(message=result.message)
+
+
+@router.post("/forgot-password", response_model=ForgotPasswordResponse)
+def forgot_password(
+    request: ForgotPasswordRequest,
+    db: Session = Depends(get_db),
+    settings: Settings = Depends(get_settings),
+) -> ForgotPasswordResponse:
+    context = RequestMapper.to_forgot_password_context(request)
+    service = _build_service(db)
+    service.forgot_password(context, settings)
+    db.commit()
+    return ForgotPasswordResponse(message="If the email exists, a reset token has been sent.")
+
+
+@router.patch("/reset-password", response_model=ResetPasswordResponse)
+def reset_password(
+    request: ResetPasswordRequest,
+    db: Session = Depends(get_db),
+    settings: Settings = Depends(get_settings),
+) -> ResetPasswordResponse:
+    context = RequestMapper.to_reset_password_context(request)
+    service = _build_service(db)
+    service.reset_password(context, settings)
+    db.commit()
+    return ResetPasswordResponse(message="Password has been reset successfully.")
