@@ -10,6 +10,11 @@ class GradeLevel(str, Enum):
     SEXTO = "sexto"
 
 
+class Gender(str, Enum):
+    BOY = "BOY"
+    GIRL = "GIRL"
+
+
 class Section(str, Enum):
     A = "A"
     B = "B"

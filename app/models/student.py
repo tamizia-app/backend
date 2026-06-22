@@ -1,3 +1,3 @@
-from app.school.modules.students.infrastructure.models import Student
+from app.school.infrastructure.models.student_model import Student
 
 __all__ = ["Student"]

@@ -39,6 +39,9 @@ class Settings(BaseSettings):
     email_from: str = "noreply@tamizai.com"
     reset_token_expire_minutes: int = 5
 
+    azure_blob_sas_expiration_minutes: int = 5
+    azure_blob_template_folder: str = "general_consent"
+
 
 @lru_cache
 def get_settings() -> Settings:
