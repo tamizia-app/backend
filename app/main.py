@@ -2,7 +2,6 @@ from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
-from app.api.router import api_router
 from app.iam.application.exceptions import IAMException
 from app.core.config import get_settings
 from app.iam.presentation.routes import router as iam_router
@@ -10,7 +9,6 @@ from app.school.application.exceptions.school_exceptions import SchoolException
 from app.school.presentation.teacher_routes import teacher_router
 from app.school.presentation.classroom_routes import classroom_router
 from app.school.presentation.student_routes import student_router
-from app.schemas.common import HealthResponse
 
 
 settings = get_settings()
@@ -32,7 +30,6 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-app.include_router(api_router, prefix=settings.api_v1_prefix)
 app.include_router(iam_router, prefix=settings.api_v1_prefix)
 app.include_router(teacher_router, prefix=settings.api_v1_prefix)
 app.include_router(classroom_router, prefix=settings.api_v1_prefix)
@@ -55,7 +52,5 @@ def school_exception_handler(request: Request, exc: SchoolException) -> JSONResp
     )
 
 
-@app.get("/health", response_model=HealthResponse, tags=["health"])
-def health() -> HealthResponse:
-    return HealthResponse(status="ok", app_name=settings.app_name, environment=settings.environment)
+
 

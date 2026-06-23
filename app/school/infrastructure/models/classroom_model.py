@@ -3,7 +3,7 @@ from datetime import UTC, date, datetime
 from sqlalchemy import Boolean, Date, DateTime, ForeignKey, String, Uuid, func
 from sqlalchemy.orm import Mapped, mapped_column
 
-from app.models.base import Base, UUIDPrimaryKeyMixin
+from app.shared.base import Base, UUIDPrimaryKeyMixin
 
 
 class ClassroomModel(UUIDPrimaryKeyMixin, Base):

@@ -1,5 +1,5 @@
 def test_login_me_refresh_logout(client):
-    login_response = client.post("/api/v1/auth/login", json={"email": "teacher@example.com", "password": "secret123"})
+    login_response = client.post("/api/v1/auth/signin", json={"email": "teacher@example.com", "password": "secret123"})
     assert login_response.status_code == 200
     payload = login_response.json()
     assert payload["token_type"] == "bearer"

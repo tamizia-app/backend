@@ -1,4 +1,4 @@
-from app.models.base import Base, UUIDPrimaryKeyMixin, TimestampMixin
+from app.shared.base import Base, UUIDPrimaryKeyMixin, TimestampMixin
 from sqlalchemy import String, ForeignKey, Uuid
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
@@ -13,4 +13,3 @@ class TeacherProfile(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     phone: Mapped[str | None] = mapped_column(String(50))
 
     user = relationship("User", back_populates="teacher_profile")
-    sessions = relationship("AssessmentSession", back_populates="teacher_profile")

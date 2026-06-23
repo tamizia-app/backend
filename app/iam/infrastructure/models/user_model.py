@@ -3,7 +3,7 @@ from datetime import UTC, datetime
 from sqlalchemy import Boolean, DateTime, String, func
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
-from app.models.base import Base, UUIDPrimaryKeyMixin
+from app.shared.base import Base, UUIDPrimaryKeyMixin
 
 
 class UserModel(UUIDPrimaryKeyMixin, Base):

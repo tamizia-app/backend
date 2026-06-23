@@ -3,7 +3,7 @@ from datetime import UTC, datetime
 from sqlalchemy import Boolean, DateTime, ForeignKey, Integer, String, Uuid, UniqueConstraint, func
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
-from app.models.base import Base, UUIDPrimaryKeyMixin
+from app.shared.base import Base, UUIDPrimaryKeyMixin
 
 
 class Student(UUIDPrimaryKeyMixin, Base):
@@ -29,7 +29,6 @@ class Student(UUIDPrimaryKeyMixin, Base):
         onupdate=lambda: datetime.now(UTC),
     )
 
-    sessions = relationship("AssessmentSession", back_populates="student")
     consent = relationship("StudentConsent", back_populates="student", uselist=False)
 
 

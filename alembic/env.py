@@ -6,7 +6,7 @@ from alembic import context
 from sqlalchemy import engine_from_config, pool
 
 from app.core.config import get_settings
-from app.models.base import Base
+from app.shared.base import Base
 from app.db.base import *  # noqa: F403
 
 

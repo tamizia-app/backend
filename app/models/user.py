@@ -3,8 +3,8 @@ from __future__ import annotations
 from sqlalchemy import Boolean, Enum, String
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
-from app.domain.enums import UserRole
-from app.models.base import Base, TimestampMixin, UUIDPrimaryKeyMixin
+from app.iam.domain.enums import UserRole
+from app.shared.base import Base, TimestampMixin, UUIDPrimaryKeyMixin
 
 
 class User(UUIDPrimaryKeyMixin, TimestampMixin, Base):
