@@ -9,6 +9,7 @@ from app.school.application.exceptions.school_exceptions import SchoolException
 from app.school.presentation.teacher_routes import teacher_router
 from app.school.presentation.classroom_routes import classroom_router
 from app.school.presentation.student_routes import student_router
+from app.assessment.presentation.routes import router as assessment_router
 
 
 settings = get_settings()
@@ -34,6 +35,7 @@ app.include_router(iam_router, prefix=settings.api_v1_prefix)
 app.include_router(teacher_router, prefix=settings.api_v1_prefix)
 app.include_router(classroom_router, prefix=settings.api_v1_prefix)
 app.include_router(student_router, prefix=settings.api_v1_prefix)
+app.include_router(assessment_router, prefix=settings.api_v1_prefix)
 
 
 @app.exception_handler(IAMException)

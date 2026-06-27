@@ -25,11 +25,17 @@ class Settings(BaseSettings):
     cors_origins: list[str] = Field(default_factory=lambda: ["*"])
 
     azure_blob_connection_string: str | None = None
-    azure_blob_container: str = "assessment-files"
+    azure_blob_container: str = Field(
+        default="assessment-files", validation_alias="AZURE_STORAGE_CONTAINER_NAME"
+    )
+    azure_storage_assessment_container_name: str = Field(
+        default="assessment-files", validation_alias="AZURE_STORAGE_ASSESSMENT_CONTAINER_NAME"
+    )
     azure_vision_endpoint: str | None = None
     azure_vision_key: str | None = None
     azure_speech_key: str | None = None
     azure_speech_region: str | None = None
+    azure_speech_endpoint: str | None = None
 
     smtp_host: str = "localhost"
     smtp_port: int = 587

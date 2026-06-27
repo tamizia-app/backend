@@ -8,15 +8,42 @@ from app.school.infrastructure.models.student_model import StudentConsent
 from app.models.audit_log import AuditLog
 from app.models.teacher_profile import TeacherProfile
 from app.models.user import User
+from app.assessment.infrastructure.models.template_model import AssessmentTemplateModel, AssessmentTemplateExerciseModel
+from app.assessment.infrastructure.models.exercise_model import AssessmentExerciseModel
+from app.assessment.infrastructure.models.question_model import OSQuestionModel, OSAnswerModel, MCQuestionModel, MCAnswerOptionModel
+from app.assessment.infrastructure.models.prompt_model import PromptExerciseModel, ExpectedAnswerModel
+from app.assessment.infrastructure.models.assessment_model import AssessmentModel
+from app.assessment.infrastructure.models.attempt_model import AssessmentAttemptModel, ExerciseAttemptModel
+from app.assessment.infrastructure.models.response_model import MCResponseModel, OSResponseModel, SpeakingResponseModel, WritingResponseModel
+from app.assessment.infrastructure.models.metrics_model import SpeakingMetricsModel, WritingMetricsModel, AssessmentResultModel
 
 __all__ = [
+    "AssessmentAttemptModel",
+    "AssessmentExerciseModel",
+    "AssessmentModel",
+    "AssessmentResultModel",
+    "AssessmentTemplateExerciseModel",
+    "AssessmentTemplateModel",
     "AuditLog",
     "ClassroomModel",
+    "ExpectedAnswerModel",
     "HomeroomTeacherModel",
+    "MCAnswerOptionModel",
+    "MCQuestionModel",
+    "MCResponseModel",
+    "OSAnswerModel",
+    "OSQuestionModel",
+    "OSResponseModel",
+    "PasswordResetTokenModel",
+    "PromptExerciseModel",
     "RefreshTokenModel",
+    "SpeakingMetricsModel",
+    "SpeakingResponseModel",
     "Student",
     "StudentConsent",
     "TeacherProfile",
     "User",
     "UserModel",
+    "WritingMetricsModel",
+    "WritingResponseModel",
 ]
