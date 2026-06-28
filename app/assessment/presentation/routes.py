@@ -1153,6 +1153,7 @@ def finish_attempt(
         speaking_response_repo=SQLAlchemySpeakingResponseRepository(db),
         writing_response_repo=SQLAlchemyWritingResponseRepository(db),
         speaking_metrics_repo=SQLAlchemySpeakingMetricsRepository(db),
+        writing_metrics_repo=SQLAlchemyWritingMetricsRepository(db),
         prompt_exercise_repo=SQLAlchemyPromptExerciseRepository(db),
         expected_answer_repo=SQLAlchemyExpectedAnswerRepository(db),
         result_repo=SQLAlchemyAssessmentResultRepository(db),
@@ -1177,6 +1178,8 @@ def finish_attempt(
         total_exercises=result.total_exercises,
         evaluated_exercises=result.evaluated_exercises,
         pending_exercises=result.pending_exercises,
+        writing_average_score=result.writing_average_score,
+        writing_review_required_count=result.writing_review_required_count,
     )
 
 
@@ -1197,6 +1200,7 @@ def get_result(
         os_response_repo=SQLAlchemyOSResponseRepository(db),
         speaking_response_repo=SQLAlchemySpeakingResponseRepository(db),
         writing_response_repo=SQLAlchemyWritingResponseRepository(db),
+        writing_metrics_repo=SQLAlchemyWritingMetricsRepository(db),
         speaking_metrics_repo=SQLAlchemySpeakingMetricsRepository(db),
         prompt_exercise_repo=SQLAlchemyPromptExerciseRepository(db),
         expected_answer_repo=SQLAlchemyExpectedAnswerRepository(db),
@@ -1220,6 +1224,8 @@ def get_result(
         total_exercises=result.total_exercises,
         evaluated_exercises=result.evaluated_exercises,
         pending_exercises=result.pending_exercises,
+        writing_average_score=result.writing_average_score,
+        writing_review_required_count=result.writing_review_required_count,
     )
 
 

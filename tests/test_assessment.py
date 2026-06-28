@@ -3502,3 +3502,304 @@ def test_get_writing_response_returns_comparison_fields(client, teacher_headers,
         assert m["word_accuracy"] == 100.0
     finally:
         get_settings.cache_clear()
+
+
+# ── Writing Fase 2C: scoring integration tests ─────────────────────────
+
+def test_finish_writing_only_with_similarity_scores_result(client, teacher_headers, classroom_id, student_id, monkeypatch):
+    from app.assessment.infrastructure.adapters.azure_vision_ocr import AzureVisionOcrAdapter
+    from app.assessment.application.ports.ocr_service import OcrResult
+    from app.core.config import get_settings
+
+    def mock_extract_text(self, image_data):
+        return OcrResult(full_text="El gato duerm", confidence_avg=0.948, raw_response={"blocks": []})
+
+    monkeypatch.setattr(AzureVisionOcrAdapter, "extract_text", mock_extract_text)
+    monkeypatch.setenv("AZURE_VISION_ENDPOINT", "https://fake.endpoint")
+    monkeypatch.setenv("AZURE_VISION_KEY", "fake-key")
+    get_settings.cache_clear()
+
+    try:
+        attempt_id, ea_id = _create_writing_setup(client, teacher_headers, classroom_id, student_id)
+        client.post(
+            f"/api/v1/assessments/exercise-attempts/{ea_id}/writing-response",
+            headers=teacher_headers,
+            files={"file": ("writing.png", b"fake-png-content", "image/png")},
+            data={"payload_json": SAMPLE_PAYLOAD_JSON},
+        )
+
+        finish = client.post(f"/api/v1/assessments/attempts/{attempt_id}/finish", headers=teacher_headers)
+        assert finish.status_code == 200
+        data = finish.json()
+        assert data["final_score"] == 86.35
+        assert data["max_score"] == 100.0
+        assert data["writing_completed_count"] == 1
+        assert data["writing_average_score"] == 86.35
+        assert data["writing_review_required_count"] == 0
+        assert data["intervention_level"] == "LOW"
+        assert data["total_exercises"] == 1
+        assert data["evaluated_exercises"] == 1
+        assert data["pending_exercises"] == 0
+    finally:
+        get_settings.cache_clear()
+
+
+def test_finish_writing_only_without_similarity_score_null_result(client, teacher_headers, classroom_id, student_id):
+    attempt_id, ea_id = _create_writing_setup(client, teacher_headers, classroom_id, student_id)
+
+    client.post(
+        f"/api/v1/assessments/exercise-attempts/{ea_id}/writing-response",
+        headers=teacher_headers,
+        files={"file": ("writing.png", b"fake-png-content", "image/png")},
+        data={"payload_json": SAMPLE_PAYLOAD_JSON},
+    )
+
+    finish = client.post(f"/api/v1/assessments/attempts/{attempt_id}/finish", headers=teacher_headers)
+    assert finish.status_code == 200
+    data = finish.json()
+    assert data["final_score"] is None
+    assert data["max_score"] is None
+    assert data["writing_completed_count"] == 1
+    assert data["writing_average_score"] is None
+    assert data["writing_review_required_count"] == 0
+    assert data["intervention_level"] is None
+
+
+def test_finish_writing_with_review_sets_medium_intervention(client, teacher_headers, classroom_id, student_id, monkeypatch):
+    from app.assessment.infrastructure.adapters.azure_vision_ocr import AzureVisionOcrAdapter
+    from app.assessment.application.ports.ocr_service import OcrResult
+    from app.core.config import get_settings
+
+    def mock_extract_text(self, image_data):
+        return OcrResult(full_text="xyz xyz xyz", confidence_avg=0.95, raw_response={"blocks": []})
+
+    monkeypatch.setattr(AzureVisionOcrAdapter, "extract_text", mock_extract_text)
+    monkeypatch.setenv("AZURE_VISION_ENDPOINT", "https://fake.endpoint")
+    monkeypatch.setenv("AZURE_VISION_KEY", "fake-key")
+    get_settings.cache_clear()
+
+    try:
+        attempt_id, ea_id = _create_writing_setup(client, teacher_headers, classroom_id, student_id)
+        client.post(
+            f"/api/v1/assessments/exercise-attempts/{ea_id}/writing-response",
+            headers=teacher_headers,
+            files={"file": ("writing.png", b"fake-png-content", "image/png")},
+            data={"payload_json": SAMPLE_PAYLOAD_JSON},
+        )
+
+        finish = client.post(f"/api/v1/assessments/attempts/{attempt_id}/finish", headers=teacher_headers)
+        assert finish.status_code == 200
+        data = finish.json()
+        assert data["writing_review_required_count"] == 1
+        # similarity_score should be well below 75, so review is required
+        # final_score will be the similarity_score of the bad match
+        assert data["final_score"] is not None  # scored, but low
+        assert data["intervention_level"] in ("MEDIUM", "HIGH")
+    finally:
+        get_settings.cache_clear()
+
+
+def test_finish_mixed_with_writing_enters_average(client, teacher_headers, classroom_id, student_id, monkeypatch):
+    from app.assessment.application.use_cases.assess_reading_pipeline import AssessReadingPipelineUseCase
+    from app.assessment.infrastructure.adapters.azure_vision_ocr import AzureVisionOcrAdapter
+    from app.assessment.application.ports.ocr_service import OcrResult
+    from app.core.config import get_settings
+
+    async def mock_speaking_execute(self, command):
+        return {
+            "status": "completed",
+            "recognized_text": "el gato",
+            "stt_recognized_text": "el gato",
+            "assessment_recognized_text": "El gato.",
+            "pronunciation_score": 100.0,
+            "accuracy_score": 100.0,
+            "fluency_score": 100.0,
+            "completeness_score": 100.0,
+            "prosody_score": None,
+            "comparison": None,
+            "review": {},
+            "error_message": None,
+            "duration_ms": 2000,
+            "raw_result_json": {},
+            "stt": {"text": "el gato", "segments": [], "language": "es", "duration_ms": 2000},
+        }
+
+    def mock_ocr_extract_text(self, image_data):
+        return OcrResult(full_text="El gato duerm", confidence_avg=0.948, raw_response={"blocks": []})
+
+    monkeypatch.setattr(AssessReadingPipelineUseCase, "execute", mock_speaking_execute)
+    monkeypatch.setattr(AzureVisionOcrAdapter, "extract_text", mock_ocr_extract_text)
+    monkeypatch.setenv("AZURE_VISION_ENDPOINT", "https://fake.endpoint")
+    monkeypatch.setenv("AZURE_VISION_KEY", "fake-key")
+    get_settings.cache_clear()
+
+    try:
+        tmpl_resp = client.post(
+            "/api/v1/assessments/templates", headers=teacher_headers, json={"name": "TMIXWR", "version": 1}
+        )
+        template_id = tmpl_resp.json()["template_id"]
+
+        mc_resp = client.post(
+            "/api/v1/assessments/exercises",
+            headers=teacher_headers,
+            json={
+                "type": "MULTIPLE_CHOICE",
+                "title": "MC",
+                "mc_question": {
+                    "question_text": "Q?",
+                    "options": [{"text": "A", "is_correct": True, "order_index": 1}],
+                },
+            },
+        ).json()
+        os_resp = client.post(
+            "/api/v1/assessments/exercises",
+            headers=teacher_headers,
+            json={
+                "type": "ORDER_SYLLABLES",
+                "title": "OS",
+                "os_question": {
+                    "question_text": "Ordena",
+                    "correct_word": "sol",
+                    "syllables_json": ["sol"],
+                },
+            },
+        ).json()
+        sp_resp = client.post(
+            "/api/v1/assessments/exercises",
+            headers=teacher_headers,
+            json={
+                "type": "READING_SPEAKING",
+                "title": "Speaking",
+                "prompt_exercise": {
+                    "text_to_show": "El gato",
+                    "language_code": "es-PE",
+                    "expected_text": "El gato.",
+                },
+            },
+        ).json()
+        wr_resp = client.post(
+            "/api/v1/assessments/exercises",
+            headers=teacher_headers,
+            json={
+                "type": "READING_WRITING",
+                "title": "Writing",
+                "prompt_exercise": {
+                    "text_to_show": "El gato duerme.",
+                    "language_code": "es-PE",
+                    "expected_text": "El gato duerme.",
+                },
+            },
+        ).json()
+
+        for ex_id, idx in [
+            (mc_resp["exercise_id"], 1),
+            (os_resp["exercise_id"], 2),
+            (sp_resp["exercise_id"], 3),
+            (wr_resp["exercise_id"], 4),
+        ]:
+            client.post(
+                f"/api/v1/assessments/templates/{template_id}/exercises",
+                headers=teacher_headers,
+                json={"exercise_id": ex_id, "order_index": idx, "points": 10, "is_required": True},
+            )
+
+        asm = client.post(
+            "/api/v1/assessments",
+            headers=teacher_headers,
+            json={"template_id": template_id, "classroom_id": str(classroom_id)},
+        ).json()
+        assessment_id = asm["assessment_id"]
+
+        att = client.post(
+            f"/api/v1/assessments/{assessment_id}/attempts",
+            headers=teacher_headers,
+            json={"student_id": str(student_id)},
+        ).json()
+        attempt_id = att["attempt_id"]
+
+        detail = client.get(f"/api/v1/assessments/attempts/{attempt_id}", headers=teacher_headers).json()
+
+        mc_ea_id = detail["exercise_attempts"][0]["exercise_attempt_id"]
+        with TestingSessionLocal() as db:
+            option = db.query(MCAnswerOptionModel).first()
+            option_id = option.id
+        client.post(
+            f"/api/v1/assessments/exercise-attempts/{mc_ea_id}/mc-response",
+            headers=teacher_headers,
+            json={"selected_option_id": str(option_id)},
+        )
+
+        os_ea_id = detail["exercise_attempts"][1]["exercise_attempt_id"]
+        client.post(
+            f"/api/v1/assessments/exercise-attempts/{os_ea_id}/os-response",
+            headers=teacher_headers,
+            json={"selected_syllables": ["sol"], "formed_word": "sol"},
+        )
+
+        sp_ea_id = detail["exercise_attempts"][2]["exercise_attempt_id"]
+        client.post(
+            f"/api/v1/assessments/exercise-attempts/{sp_ea_id}/speaking-response",
+            headers=teacher_headers,
+            files={"file": ("test.wav", b"fake audio", "audio/wav")},
+        )
+
+        wr_ea_id = detail["exercise_attempts"][3]["exercise_attempt_id"]
+        client.post(
+            f"/api/v1/assessments/exercise-attempts/{wr_ea_id}/writing-response",
+            headers=teacher_headers,
+            files={"file": ("writing.png", b"fake-png-content", "image/png")},
+            data={"payload_json": SAMPLE_PAYLOAD_JSON},
+        )
+
+        finish = client.post(f"/api/v1/assessments/attempts/{attempt_id}/finish", headers=teacher_headers)
+        assert finish.status_code == 200
+        data = finish.json()
+        # MC=100, OS=100, Speaking=100, Writing=86.35
+        # avg = (100+100+100+86.35) / 4 = 386.35 / 4 = 96.59 (rounded)
+        assert data["final_score"] == 96.59
+        assert data["max_score"] == 400.0
+        assert data["writing_average_score"] == 86.35
+        assert data["writing_completed_count"] == 1
+        assert data["writing_review_required_count"] == 0
+        assert data["mc_correct_count"] == 1
+        assert data["os_correct_count"] == 1
+        assert data["speaking_completed_count"] == 1
+    finally:
+        get_settings.cache_clear()
+
+
+def test_get_result_returns_writing_fields(client, teacher_headers, classroom_id, student_id, monkeypatch):
+    from app.assessment.infrastructure.adapters.azure_vision_ocr import AzureVisionOcrAdapter
+    from app.assessment.application.ports.ocr_service import OcrResult
+    from app.core.config import get_settings
+
+    def mock_extract_text(self, image_data):
+        return OcrResult(full_text="El gato duerm", confidence_avg=0.948, raw_response={"blocks": []})
+
+    monkeypatch.setattr(AzureVisionOcrAdapter, "extract_text", mock_extract_text)
+    monkeypatch.setenv("AZURE_VISION_ENDPOINT", "https://fake.endpoint")
+    monkeypatch.setenv("AZURE_VISION_KEY", "fake-key")
+    get_settings.cache_clear()
+
+    try:
+        attempt_id, ea_id = _create_writing_setup(client, teacher_headers, classroom_id, student_id)
+        client.post(
+            f"/api/v1/assessments/exercise-attempts/{ea_id}/writing-response",
+            headers=teacher_headers,
+            files={"file": ("writing.png", b"fake-png-content", "image/png")},
+            data={"payload_json": SAMPLE_PAYLOAD_JSON},
+        )
+
+        client.post(f"/api/v1/assessments/attempts/{attempt_id}/finish", headers=teacher_headers)
+
+        result = client.get(f"/api/v1/assessments/attempts/{attempt_id}/result", headers=teacher_headers)
+        assert result.status_code == 200
+        data = result.json()
+        assert data["final_score"] == 86.35
+        assert data["max_score"] == 100.0
+        assert data["writing_completed_count"] == 1
+        assert data["writing_average_score"] == 86.35
+        assert data["writing_review_required_count"] == 0
+        assert data["intervention_level"] == "LOW"
+    finally:
+        get_settings.cache_clear()

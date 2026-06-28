@@ -15,6 +15,7 @@ from app.assessment.application.ports.repositories import (
     SpeakingMetricsRepository,
     SpeakingResponseRepository,
     TemplateExerciseRepository,
+    WritingMetricsRepository,
     WritingResponseRepository,
 )
 from app.assessment.application.results import FinalResult
@@ -39,6 +40,7 @@ class GetAssessmentResultUseCase:
         os_response_repo: OSResponseRepository | None = None,
         speaking_response_repo: SpeakingResponseRepository | None = None,
         writing_response_repo: WritingResponseRepository | None = None,
+        writing_metrics_repo: WritingMetricsRepository | None = None,
         speaking_metrics_repo: SpeakingMetricsRepository | None = None,
         prompt_exercise_repo: PromptExerciseRepository | None = None,
         expected_answer_repo: ExpectedAnswerRepository | None = None,
@@ -52,6 +54,7 @@ class GetAssessmentResultUseCase:
         self._os_response_repo = os_response_repo
         self._speaking_response_repo = speaking_response_repo
         self._writing_response_repo = writing_response_repo
+        self._writing_metrics_repo = writing_metrics_repo
         self._speaking_metrics_repo = speaking_metrics_repo
         self._prompt_exercise_repo = prompt_exercise_repo
         self._expected_answer_repo = expected_answer_repo
@@ -77,6 +80,8 @@ class GetAssessmentResultUseCase:
         evaluated_exercises = 0
         review_required_count = 0
         speaking_scores = []
+        writing_scores = []
+        writing_review_count = 0
 
         for ea in exercise_attempts:
             te = self._template_exercise_repo.find_by_id(ea.template_exercise_id)
@@ -98,6 +103,15 @@ class GetAssessmentResultUseCase:
                     if needs_review:
                         review_required_count += 1
 
+            elif etype in (ExerciseType.READING_WRITING, ExerciseType.LISTENING_WRITING):
+                wr = self._writing_response_repo.find_by_exercise_attempt_id(ea.id)
+                if wr and self._writing_metrics_repo:
+                    metrics = self._writing_metrics_repo.find_by_writing_response_id(wr.id)
+                    if metrics and metrics.similarity_score is not None:
+                        writing_scores.append(metrics.similarity_score)
+                        if metrics.similarity_score < 75:
+                            writing_review_count += 1
+
         result.total_exercises = total_exercises
         result.evaluated_exercises = evaluated_exercises
         result.pending_exercises = total_exercises - evaluated_exercises
@@ -105,6 +119,10 @@ class GetAssessmentResultUseCase:
             sum(speaking_scores) / len(speaking_scores) if speaking_scores else None
         )
         result.speaking_review_required_count = review_required_count
+        result.writing_average_score = (
+            sum(writing_scores) / len(writing_scores) if writing_scores else None
+        )
+        result.writing_review_required_count = writing_review_count
         return result
 
     def _evaluate_speaking(self, exercise_id, speaking_resp):

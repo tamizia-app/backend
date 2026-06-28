@@ -156,3 +156,5 @@ class FinalResult:
     total_exercises: int = 0
     evaluated_exercises: int = 0
     pending_exercises: int = 0
+    writing_average_score: float | None = None
+    writing_review_required_count: int = 0

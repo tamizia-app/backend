@@ -208,11 +208,99 @@ Este caso NO requiere revisión porque:
 
 ## Integración con el scoring general (Fase 2C)
 
-Actualmente (Fase 2B), las métricas de Writing se calculan y persisten pero **no**
-afectan `final_score`, `max_score` ni `intervention_level`. Writing incrementa
-`writing_completed_count` y `evaluated_exercises`, pero no `scored_exercises`.
+### Regla base
 
-La integración al scoring general está planificada para la **Fase 2C**.
+```python
+writing_score = similarity_score
+```
+
+Writing entra al `final_score` solo cuando `similarity_score` no es `None`. Esto
+significa que:
+
+- Writing con OCR exitoso y similaridad calculada → **puntuable** (entra a
+  `scored_exercises` y al denominador de `final_score`)
+- Writing sin OCR o con OCR fallido → **no puntuable** (`similarity_score` es
+  `None`, no afecta `final_score`)
+- Writing sin OCR previo a Fase 2C → comportamiento preservado (no puntuable)
+
+### Cálculo de final_score
+
+```python
+total_score = sum(MIC, OS, Speaking, Writing)
+scored_exercises = count(ejercicios con score)
+final_score = total_score / scored_exercises  # si scored_exercises > 0
+max_score = scored_exercises * 100
+```
+
+### writing_average_score
+
+```python
+writing_average_score = sum(writing_scores) / len(writing_scores)
+```
+
+Donde `writing_scores` son los `similarity_score` de cada Writing con OCR
+exitoso. Actualmente solo hay un Writing por assessment, pero el cálculo soporta
+múltiples.
+
+### writing_review_required_count
+
+```python
+writing_review_required_count = count(writing donde similarity_score < 75)
+```
+
+Se usa para elevar `intervention_level` (ver reglas abajo).
+
+### Intervención por writing review
+
+El `intervention_level` sigue la lógica existente de `_determine_intervention_level`
+con los siguientes ajustes:
+
+| Condición | Nivel |
+|-----------|-------|
+| `final_score ≥ 80` sin reviews | LOW |
+| `final_score ≥ 80` con reviews | MEDIUM |
+| `final_score ≥ 50` | MEDIUM |
+| `final_score < 50` | HIGH |
+| Cualquier ejercicio fallido | HIGH |
+| `writing_review_required_count > 0` y `final_score < 70` y nivel MEDIUM | **HIGH** |
+
+### Ejemplo
+
+```
+expected_text:    "El gato duerme."
+recognized_text:  "El gato duerm"
+similarity_score: 86.35
+```
+
+| Campo | Valor |
+|-------|-------|
+| `final_score` | 86.35 |
+| `max_score` | 100.0 |
+| `writing_completed_count` | 1 |
+| `writing_average_score` | 86.35 |
+| `writing_review_required_count` | 0 |
+| `intervention_level` | LOW |
+| `total_exercises` | 1 |
+| `evaluated_exercises` | 1 |
+| `pending_exercises` | 0 |
+
+### Assessment mixto
+
+Si hay MC=100, OS=100, Speaking=90, Writing=86.35:
+
+```python
+scored_exercises = 4
+total_score = 100 + 100 + 90 + 86.35 = 376.35
+final_score = 376.35 / 4 = 94.09
+max_score = 400
+```
+
+### Advertencia
+
+> `review_required` no constituye diagnóstico. Solo marca la necesidad de que
+> un docente revise manualmente la respuesta escrita. Los umbrales siguen siendo
+> baseline técnico para MVP y deben calibrarse por grado escolar, edad y criterio
+> profesional en una fase posterior.
 
 ---
 

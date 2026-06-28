@@ -19,6 +19,7 @@ from app.assessment.application.ports.repositories import (
     SpeakingMetricsRepository,
     SpeakingResponseRepository,
     TemplateExerciseRepository,
+    WritingMetricsRepository,
     WritingResponseRepository,
 )
 from app.assessment.domain.enums import AttemptStatus, ExerciseAttemptStatus, ExerciseType, InterventionLevel
@@ -44,6 +45,7 @@ class FinishAssessmentAttemptUseCase:
         speaking_response_repo: SpeakingResponseRepository,
         writing_response_repo: WritingResponseRepository,
         speaking_metrics_repo: SpeakingMetricsRepository,
+        writing_metrics_repo: WritingMetricsRepository,
         prompt_exercise_repo: PromptExerciseRepository,
         expected_answer_repo: ExpectedAnswerRepository,
         result_repo: AssessmentResultRepository,
@@ -57,6 +59,7 @@ class FinishAssessmentAttemptUseCase:
         self._speaking_response_repo = speaking_response_repo
         self._writing_response_repo = writing_response_repo
         self._speaking_metrics_repo = speaking_metrics_repo
+        self._writing_metrics_repo = writing_metrics_repo
         self._prompt_exercise_repo = prompt_exercise_repo
         self._expected_answer_repo = expected_answer_repo
         self._result_repo = result_repo
@@ -81,6 +84,8 @@ class FinishAssessmentAttemptUseCase:
         review_required_count = 0
         any_failed = False
         speaking_scores: list[float] = []
+        writing_scores: list[float] = []
+        writing_review_count = 0
 
         for ea in exercise_attempts:
             te = self._template_exercise_repo.find_by_id(ea.template_exercise_id)
@@ -137,16 +142,25 @@ class FinishAssessmentAttemptUseCase:
                 if resp:
                     writing_done += 1
                     evaluated_exercises += 1
-                    # Writing without OCR does NOT contribute to scored_exercises
-                    # so it does not lower the final_score denominator.
+                    metrics = self._writing_metrics_repo.find_by_writing_response_id(resp.id)
+                    if metrics and metrics.similarity_score is not None:
+                        scored_exercises += 1
+                        total_score += metrics.similarity_score
+                        writing_scores.append(metrics.similarity_score)
+                        if metrics.similarity_score < 75:
+                            writing_review_count += 1
 
         final_score = (total_score / scored_exercises) if scored_exercises > 0 else None
         speaking_average_score = sum(speaking_scores) / len(speaking_scores) if speaking_scores else None
+        writing_average_score = sum(writing_scores) / len(writing_scores) if writing_scores else None
+        combined_review_count = review_required_count + writing_review_count
 
         if scored_exercises == 0:
             level = None
         else:
-            level = self._determine_intervention_level(final_score or 0.0, review_required_count, any_failed)
+            level = self._determine_intervention_level(
+                final_score or 0.0, combined_review_count, any_failed, writing_review_count
+            )
 
         now = datetime.now(timezone.utc)
         attempt.status = AttemptStatus.COMPLETED
@@ -174,6 +188,8 @@ class FinishAssessmentAttemptUseCase:
         result.total_exercises = total_exercises
         result.evaluated_exercises = evaluated_exercises
         result.pending_exercises = total_exercises - evaluated_exercises
+        result.writing_average_score = writing_average_score
+        result.writing_review_required_count = writing_review_count
         return result
 
     def _evaluate_speaking(
@@ -225,7 +241,10 @@ class FinishAssessmentAttemptUseCase:
 
     @staticmethod
     def _determine_intervention_level(
-        final_score: float, review_required_count: int, any_failed: bool
+        final_score: float,
+        review_required_count: int,
+        any_failed: bool,
+        writing_review_required_count: int = 0,
     ) -> InterventionLevel:
         if any_failed:
             return InterventionLevel.HIGH
@@ -234,6 +253,12 @@ class FinishAssessmentAttemptUseCase:
                 return InterventionLevel.MEDIUM
             return InterventionLevel.LOW
         elif final_score >= 50:
-            return InterventionLevel.MEDIUM
+            level = InterventionLevel.MEDIUM
         else:
             return InterventionLevel.HIGH
+
+        # Extra elevation for writing reviews: if MEDIUM and final_score < 70,
+        # elevate to HIGH when writing reviews are present.
+        if writing_review_required_count > 0 and final_score < 70:
+            return InterventionLevel.HIGH
+        return level

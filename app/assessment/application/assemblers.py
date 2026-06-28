@@ -172,4 +172,6 @@ class FinalResultAssembler:
             total_exercises=r.total_exercises,
             evaluated_exercises=r.evaluated_exercises,
             pending_exercises=r.pending_exercises,
+            writing_average_score=r.writing_average_score,
+            writing_review_required_count=r.writing_review_required_count,
         )
