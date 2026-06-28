@@ -1143,3 +1143,317 @@ def test_speaking_metrics_model_new_fields():
     assert metrics.raw_transcription_result_json["text"] == "whisper result"
     assert metrics.raw_speech_result_json["NBest"][0]["PronScore"] == 90
     session.close()
+
+
+def test_create_attempt_returns_exercise_attempts(client, teacher_headers, classroom_id, student_id):
+    tmpl_resp = client.post(
+        "/api/v1/assessments/templates", headers=teacher_headers, json={"name": "TEA", "version": 1}
+    )
+    template_id = tmpl_resp.json()["template_id"]
+
+    ex1 = client.post(
+        "/api/v1/assessments/exercises",
+        headers=teacher_headers,
+        json={
+            "type": "MULTIPLE_CHOICE",
+            "title": "MC1",
+            "mc_question": {
+                "question_text": "Q?",
+                "options": [{"text": "A", "is_correct": True, "order_index": 1}],
+            },
+        },
+    ).json()["exercise_id"]
+
+    client.post(
+        f"/api/v1/assessments/templates/{template_id}/exercises",
+        headers=teacher_headers,
+        json={"exercise_id": ex1, "order_index": 1, "points": 10, "is_required": True},
+    )
+
+    asm = client.post(
+        "/api/v1/assessments",
+        headers=teacher_headers,
+        json={"template_id": template_id, "classroom_id": str(classroom_id)},
+    ).json()
+
+    response = client.post(
+        f"/api/v1/assessments/{asm['assessment_id']}/attempts",
+        headers=teacher_headers,
+        json={"student_id": str(student_id)},
+    )
+    assert response.status_code == 201
+    data = response.json()
+    assert "exercise_attempts" in data
+    assert len(data["exercise_attempts"]) == 1
+    ea = data["exercise_attempts"][0]
+    assert "exercise_attempt_id" in ea
+    assert ea["template_exercise_id"] is not None
+    assert ea["status"] == "PENDING"
+
+
+def test_get_attempt_detail_includes_exercise_data(client, teacher_headers, classroom_id, student_id):
+    tmpl_resp = client.post(
+        "/api/v1/assessments/templates", headers=teacher_headers, json={"name": "TED", "version": 1}
+    )
+    template_id = tmpl_resp.json()["template_id"]
+
+    ex_resp = client.post(
+        "/api/v1/assessments/exercises",
+        headers=teacher_headers,
+        json={
+            "type": "MULTIPLE_CHOICE",
+            "title": "MC Detail",
+            "instructions": "Pick one",
+            "mc_question": {
+                "question_text": "Q?",
+                "options": [{"text": "A", "is_correct": True, "order_index": 1}],
+            },
+        },
+    ).json()
+    exercise_id = ex_resp["exercise_id"]
+
+    client.post(
+        f"/api/v1/assessments/templates/{template_id}/exercises",
+        headers=teacher_headers,
+        json={"exercise_id": exercise_id, "order_index": 2, "points": 5, "is_required": False},
+    )
+
+    asm = client.post(
+        "/api/v1/assessments",
+        headers=teacher_headers,
+        json={"template_id": template_id, "classroom_id": str(classroom_id)},
+    ).json()
+
+    att = client.post(
+        f"/api/v1/assessments/{asm['assessment_id']}/attempts",
+        headers=teacher_headers,
+        json={"student_id": str(student_id)},
+    ).json()
+
+    detail = client.get(
+        f"/api/v1/assessments/attempts/{att['attempt_id']}",
+        headers=teacher_headers,
+    )
+    assert detail.status_code == 200
+    items = detail.json()["exercise_attempts"]
+    assert len(items) == 1
+    item = items[0]
+    assert "exercise" in item
+    ex = item["exercise"]
+    assert ex["exercise_id"] == exercise_id
+    assert ex["type"] == "MULTIPLE_CHOICE"
+    assert ex["title"] == "MC Detail"
+    assert ex["instructions"] == "Pick one"
+    assert ex["order_index"] == 2
+    assert ex["points"] == 5
+    assert ex["is_required"] == False
+
+
+def test_list_attempts_by_assessment(client, teacher_headers, classroom_id, student_id):
+    tmpl_resp = client.post(
+        "/api/v1/assessments/templates", headers=teacher_headers, json={"name": "TLA", "version": 1}
+    )
+    template_id = tmpl_resp.json()["template_id"]
+
+    ex_resp = client.post(
+        "/api/v1/assessments/exercises",
+        headers=teacher_headers,
+        json={
+            "type": "MULTIPLE_CHOICE",
+            "title": "MC",
+            "mc_question": {
+                "question_text": "Q?",
+                "options": [{"text": "A", "is_correct": True, "order_index": 1}],
+            },
+        },
+    ).json()
+    exercise_id = ex_resp["exercise_id"]
+
+    client.post(
+        f"/api/v1/assessments/templates/{template_id}/exercises",
+        headers=teacher_headers,
+        json={"exercise_id": exercise_id, "order_index": 1, "points": 10, "is_required": True},
+    )
+
+    asm = client.post(
+        "/api/v1/assessments",
+        headers=teacher_headers,
+        json={"template_id": template_id, "classroom_id": str(classroom_id)},
+    ).json()
+    assessment_id = asm["assessment_id"]
+
+    client.post(
+        f"/api/v1/assessments/{assessment_id}/attempts",
+        headers=teacher_headers,
+        json={"student_id": str(student_id)},
+    )
+
+    resp = client.get(
+        f"/api/v1/assessments/{assessment_id}/attempts",
+        headers=teacher_headers,
+    )
+    assert resp.status_code == 200
+    data = resp.json()
+    assert len(data["items"]) == 1
+    assert data["total"] == 1
+    item = data["items"][0]
+    assert item["status"] == "IN_PROGRESS"
+    assert item["final_score"] is None
+
+
+def test_list_attempts_filter_by_student(client, teacher_headers, classroom_id, student_id):
+    tmpl_resp = client.post(
+        "/api/v1/assessments/templates", headers=teacher_headers, json={"name": "TLF", "version": 1}
+    )
+    template_id = tmpl_resp.json()["template_id"]
+
+    ex_resp = client.post(
+        "/api/v1/assessments/exercises",
+        headers=teacher_headers,
+        json={
+            "type": "MULTIPLE_CHOICE",
+            "title": "MC",
+            "mc_question": {
+                "question_text": "Q?",
+                "options": [{"text": "A", "is_correct": True, "order_index": 1}],
+            },
+        },
+    ).json()
+
+    client.post(
+        f"/api/v1/assessments/templates/{template_id}/exercises",
+        headers=teacher_headers,
+        json={"exercise_id": ex_resp["exercise_id"], "order_index": 1, "points": 10, "is_required": True},
+    )
+
+    asm = client.post(
+        "/api/v1/assessments",
+        headers=teacher_headers,
+        json={"template_id": template_id, "classroom_id": str(classroom_id)},
+    ).json()
+    assessment_id = asm["assessment_id"]
+
+    client.post(
+        f"/api/v1/assessments/{assessment_id}/attempts",
+        headers=teacher_headers,
+        json={"student_id": str(student_id)},
+    )
+
+    resp = client.get(
+        f"/api/v1/assessments/{assessment_id}/attempts?student_id={student_id}",
+        headers=teacher_headers,
+    )
+    assert resp.status_code == 200
+    data = resp.json()
+    assert len(data["items"]) == 1
+
+    fake_id = uuid.uuid4()
+    resp2 = client.get(
+        f"/api/v1/assessments/{assessment_id}/attempts?student_id={fake_id}",
+        headers=teacher_headers,
+    )
+    assert resp2.status_code == 200
+    assert len(resp2.json()["items"]) == 0
+
+
+def test_get_speaking_response_not_found(client, teacher_headers, classroom_id, student_id):
+    fake_id = uuid.uuid4()
+    resp = client.get(
+        f"/api/v1/assessments/exercise-attempts/{fake_id}/speaking-response",
+        headers=teacher_headers,
+    )
+    assert resp.status_code == 404
+
+
+def test_get_speaking_response_returns_saved_data(client, teacher_headers, classroom_id, student_id):
+    tmpl_resp = client.post(
+        "/api/v1/assessments/templates", headers=teacher_headers, json={"name": "TSR", "version": 1}
+    )
+    template_id = tmpl_resp.json()["template_id"]
+
+    from app.assessment.infrastructure.models.prompt_model import ExpectedAnswerModel, PromptExerciseModel
+
+    ex_resp = client.post(
+        "/api/v1/assessments/exercises",
+        headers=teacher_headers,
+        json={
+            "type": "READING_SPEAKING",
+            "title": "Speaking",
+            "instructions": "Read aloud",
+            "prompt_exercise": {
+                "prompt_text": "Read",
+                "text_to_show": "El gato",
+                "expected_text": "El gato",
+            },
+        },
+    ).json()
+    exercise_id = ex_resp["exercise_id"]
+
+    client.post(
+        f"/api/v1/assessments/templates/{template_id}/exercises",
+        headers=teacher_headers,
+        json={"exercise_id": exercise_id, "order_index": 1, "points": 10, "is_required": True},
+    )
+
+    asm = client.post(
+        "/api/v1/assessments",
+        headers=teacher_headers,
+        json={"template_id": template_id, "classroom_id": str(classroom_id)},
+    ).json()
+
+    att = client.post(
+        f"/api/v1/assessments/{asm['assessment_id']}/attempts",
+        headers=teacher_headers,
+        json={"student_id": str(student_id)},
+    ).json()
+    ea_id = att["exercise_attempts"][0]["exercise_attempt_id"]
+
+    from app.assessment.infrastructure.models.response_model import SpeakingResponseModel
+
+    with TestingSessionLocal() as db:
+        from app.assessment.infrastructure.models.metrics_model import SpeakingMetricsModel
+        sr = SpeakingResponseModel(
+            id=uuid.uuid4(),
+            exercise_attempt_id=uuid.UUID(ea_id),
+            audio_blob_path="audio/test.wav",
+            original_filename="test.wav",
+            content_type="audio/wav",
+            duration_ms=3000,
+            free_transcription_text="el gato",
+            assessment_recognized_text="El gato.",
+            recognized_text="el gato",
+        )
+        db.add(sr)
+        db.flush()
+        sm = SpeakingMetricsModel(
+            id=uuid.uuid4(),
+            speaking_response_id=sr.id,
+            pronunciation_score=95.0,
+            accuracy_score=90.0,
+            fluency_score=85.0,
+            completeness_score=88.0,
+            prosody_score=None,
+            raw_speech_result_json={"comparison": {"lexical_match_percentage": 100}, "review": {"required": False}},
+            raw_transcription_result_json={"text": "el gato"},
+        )
+        db.add(sm)
+        db.commit()
+
+    resp = client.get(
+        f"/api/v1/assessments/exercise-attempts/{ea_id}/speaking-response",
+        headers=teacher_headers,
+    )
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["response_id"] is not None
+    assert data["exercise_attempt_id"] == ea_id
+    assert data["audio_blob_path"] == "audio/test.wav"
+    assert data["pronunciation_score"] == 95.0
+    assert data["accuracy_score"] == 90.0
+    assert data["fluency_score"] == 85.0
+    assert data["completeness_score"] == 88.0
+    assert data["prosody_score"] is None
+    assert data["evaluation_status"] == "completed"
+    assert data["comparison"] is not None
+    assert data["review"] is not None
+    assert data["review"]["required"] == False

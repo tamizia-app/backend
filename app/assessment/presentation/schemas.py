@@ -107,6 +107,37 @@ class StartAttemptRequest(BaseModel):
     student_id: UUID
 
 
+class PromptExerciseSchema(BaseModel):
+    prompt_text: str | None = None
+    text_to_show: str | None = None
+    audio_blob_path: str | None = None
+    image_blob_path: str | None = None
+    language_code: str | None = None
+
+
+class ExerciseDetail(BaseModel):
+    exercise_id: UUID
+    type: str
+    title: str
+    instructions: str | None = None
+    stimulus_type: str | None = None
+    response_type: str | None = None
+    difficulty_level: int | None = None
+    order_index: int = 0
+    points: int = 0
+    is_required: bool = True
+    prompt_exercise: PromptExerciseSchema | None = None
+
+
+class ExerciseAttemptItem(BaseModel):
+    exercise_attempt_id: UUID
+    template_exercise_id: UUID
+    status: str
+    started_at: datetime | None
+    submitted_at: datetime | None
+    exercise: ExerciseDetail | None = None
+
+
 class AttemptResponse(BaseModel):
     attempt_id: UUID
     assessment_id: UUID
@@ -116,14 +147,7 @@ class AttemptResponse(BaseModel):
     completed_at: datetime | None
     created_at: datetime
     updated_at: datetime
-
-
-class ExerciseAttemptItem(BaseModel):
-    exercise_attempt_id: UUID
-    template_exercise_id: UUID
-    status: str
-    started_at: datetime | None
-    submitted_at: datetime | None
+    exercise_attempts: list[ExerciseAttemptItem] = []
 
 
 class AttemptDetailResponse(BaseModel):
@@ -204,6 +228,22 @@ class AssessmentResultResponse(BaseModel):
     total_exercises: int = 0
     evaluated_exercises: int = 0
     pending_exercises: int = 0
+
+
+class AttemptListItem(BaseModel):
+    attempt_id: UUID
+    assessment_id: UUID
+    student_id: UUID
+    status: str
+    started_at: datetime
+    completed_at: datetime | None
+    final_score: float | None = None
+    intervention_level: str | None = None
+
+
+class AttemptListResponse(BaseModel):
+    items: list[AttemptListItem]
+    total: int
 
 
 class DownloadUrlResponse(BaseModel):

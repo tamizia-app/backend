@@ -15,7 +15,7 @@ from app.assessment.application.ports.repositories import (
     TemplateExerciseRepository,
     TemplateRepository,
 )
-from app.assessment.application.results import AttemptResult
+from app.assessment.application.results import AttemptResult, ExerciseAttemptResult
 from app.assessment.domain.attempt import AssessmentAttempt, ExerciseAttempt
 from app.assessment.domain.enums import AttemptStatus, ExerciseAttemptStatus
 from app.school.application.ports.consent_repository import StudentConsentRepository
@@ -94,6 +94,17 @@ class StartAssessmentAttemptUseCase:
                     updated_at=now,
                 )
             )
-        self._exercise_attempt_repo.create_many(exercise_attempts)
+        saved = self._exercise_attempt_repo.create_many(exercise_attempts)
 
-        return AttemptAssembler.to_result(attempt)
+        exercise_attempt_results = [
+            ExerciseAttemptResult(
+                exercise_attempt_id=ea.id,
+                template_exercise_id=ea.template_exercise_id,
+                status=ea.status,
+                started_at=ea.started_at,
+                submitted_at=ea.submitted_at,
+            )
+            for ea in saved
+        ]
+
+        return AttemptAssembler.to_result(attempt, exercise_attempt_results)

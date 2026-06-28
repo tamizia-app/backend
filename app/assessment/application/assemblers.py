@@ -70,7 +70,7 @@ class AssessmentAssembler:
 
 class AttemptAssembler:
     @staticmethod
-    def to_result(a: AssessmentAttempt) -> AttemptResult:
+    def to_result(a: AssessmentAttempt, exercise_attempts: list[ExerciseAttemptResult] | None = None) -> AttemptResult:
         return AttemptResult(
             attempt_id=a.id,
             assessment_id=a.assessment_id,
@@ -80,6 +80,7 @@ class AttemptAssembler:
             completed_at=a.completed_at,
             created_at=a.created_at,
             updated_at=a.updated_at,
+            exercise_attempts=exercise_attempts,
         )
 
 

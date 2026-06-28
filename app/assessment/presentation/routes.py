@@ -86,10 +86,14 @@ from app.assessment.infrastructure.repositories.assessment_repositories import (
     SQLAlchemyTemplateRepository,
     SQLAlchemyWritingResponseRepository,
 )
+from app.assessment.domain.enums import ExerciseType
+from app.assessment.domain.metrics import AssessmentResult as AssessmentResultDomain
 from app.assessment.presentation.schemas import (
     AssessmentResponse,
     AssessmentResultResponse,
     AttemptDetailResponse,
+    AttemptListResponse,
+    AttemptListItem,
     AttemptResponse,
     AttachExerciseRequest,
     CreateAssessmentRequest,
@@ -424,6 +428,55 @@ def get_assessment(
 # ─── Attempt endpoints ────────────────────────────────────────
 
 
+@router.get("/{assessment_id}/attempts", response_model=AttemptListResponse)
+def list_attempts(
+    assessment_id: UUID,
+    student_id: UUID | None = None,
+    status: str | None = None,
+    limit: int = 50,
+    offset: int = 0,
+    db: Session = Depends(get_db),
+    current_user: UserModel = Depends(get_current_user),
+) -> AttemptListResponse:
+    _resolve_teacher_id(db, current_user.id)
+    attempt_repo = SQLAlchemyAssessmentAttemptRepository(db)
+    attempts = attempt_repo.find_by_assessment_id(assessment_id)
+
+    if student_id:
+        attempts = [a for a in attempts if a.student_id == student_id]
+    if status:
+        attempts = [a for a in attempts if a.status.value == status]
+
+    total = len(attempts)
+    paginated = attempts[offset:offset + limit]
+
+    result_ids = [a.id for a in paginated]
+    results_map: dict[UUID, AssessmentResultDomain] = {}
+    if result_ids:
+        result_repo = SQLAlchemyAssessmentResultRepository(db)
+        for rid in result_ids:
+            r = result_repo.find_by_attempt_id(rid)
+            if r:
+                results_map[rid] = r
+
+    items = []
+    for a in paginated:
+        r = results_map.get(a.id)
+        items.append(
+            AttemptListItem(
+                attempt_id=a.id,
+                assessment_id=a.assessment_id,
+                student_id=a.student_id,
+                status=a.status.value,
+                started_at=a.started_at,
+                completed_at=a.completed_at,
+                final_score=r.final_score if r else None,
+                intervention_level=r.intervention_level.value if r and r.intervention_level else None,
+            )
+        )
+    return AttemptListResponse(items=items, total=total)
+
+
 @router.post(
     "/{assessment_id}/attempts",
     response_model=AttemptResponse,
@@ -464,6 +517,16 @@ def start_attempt(
         completed_at=result.completed_at,
         created_at=result.created_at,
         updated_at=result.updated_at,
+        exercise_attempts=[
+            ExerciseAttemptItem(
+                exercise_attempt_id=ea.exercise_attempt_id,
+                template_exercise_id=ea.template_exercise_id,
+                status=ea.status.value,
+                started_at=ea.started_at,
+                submitted_at=ea.submitted_at,
+            )
+            for ea in (result.exercise_attempts or [])
+        ],
     )
 
 
@@ -480,6 +543,50 @@ def get_attempt(
     if not attempt:
         raise HTTPException(status_code=404, detail="Attempt not found")
     exercise_attempts = ea_repo.find_by_assessment_attempt_id(attempt_id)
+    te_repo = SQLAlchemyTemplateExerciseRepository(db)
+    ex_repo = SQLAlchemyExerciseRepository(db)
+    prompt_repo = SQLAlchemyPromptExerciseRepository(db)
+    exercise_attempt_items = []
+    for ea in exercise_attempts:
+        te = te_repo.find_by_id(ea.template_exercise_id)
+        exercise_detail = None
+        if te:
+            exercise = ex_repo.find_by_id(te.exercise_id)
+            if exercise:
+                prompt = prompt_repo.find_by_exercise_id(exercise.id) if exercise.type in (
+                    ExerciseType.READING_SPEAKING, ExerciseType.LISTENING_SPEAKING,
+                    ExerciseType.READING_WRITING, ExerciseType.LISTENING_WRITING,
+                ) else None
+                from app.assessment.presentation.schemas import PromptExerciseSchema, ExerciseDetail
+                exercise_detail = ExerciseDetail(
+                    exercise_id=exercise.id,
+                    type=exercise.type.value,
+                    title=exercise.title,
+                    instructions=exercise.instructions,
+                    stimulus_type=exercise.stimulus_type,
+                    response_type=exercise.response_type,
+                    difficulty_level=exercise.difficulty_level,
+                    order_index=te.order_index,
+                    points=te.points,
+                    is_required=te.is_required,
+                    prompt_exercise=PromptExerciseSchema(
+                        prompt_text=prompt.prompt_text,
+                        text_to_show=prompt.text_to_show,
+                        audio_blob_path=prompt.audio_blob_path,
+                        image_blob_path=prompt.image_blob_path,
+                        language_code=prompt.language_code,
+                    ) if prompt else None,
+                )
+        exercise_attempt_items.append(
+            ExerciseAttemptItem(
+                exercise_attempt_id=ea.id,
+                template_exercise_id=ea.template_exercise_id,
+                status=ea.status.value,
+                started_at=ea.started_at,
+                submitted_at=ea.submitted_at,
+                exercise=exercise_detail,
+            )
+        )
     return AttemptDetailResponse(
         attempt_id=attempt.id,
         assessment_id=attempt.assessment_id,
@@ -487,16 +594,7 @@ def get_attempt(
         status=attempt.status.value,
         started_at=attempt.started_at,
         completed_at=attempt.completed_at,
-        exercise_attempts=[
-            ExerciseAttemptItem(
-                exercise_attempt_id=ea.id,
-                template_exercise_id=ea.template_exercise_id,
-                status=ea.status.value,
-                started_at=ea.started_at,
-                submitted_at=ea.submitted_at,
-            )
-            for ea in exercise_attempts
-        ],
+        exercise_attempts=exercise_attempt_items,
     )
 
 
@@ -647,6 +745,56 @@ async def upload_speaking_response(
         comparison=result.comparison,
         review=result.review,
         error_message=result.error_message,
+    )
+
+
+@router.get(
+    "/exercise-attempts/{exercise_attempt_id}/speaking-response",
+    response_model=SpeakingResponseResponse,
+)
+def get_speaking_response(
+    exercise_attempt_id: UUID,
+    db: Session = Depends(get_db),
+    current_user: UserModel = Depends(get_current_user),
+) -> SpeakingResponseResponse:
+    _resolve_teacher_id(db, current_user.id)
+    speaking_repo = SQLAlchemySpeakingResponseRepository(db)
+    metrics_repo = SQLAlchemySpeakingMetricsRepository(db)
+
+    speaking_resp = speaking_repo.find_by_exercise_attempt_id(exercise_attempt_id)
+    if not speaking_resp:
+        raise HTTPException(status_code=404, detail="Speaking response not found")
+
+    metrics = metrics_repo.find_by_speaking_response_id(speaking_resp.id)
+
+    evaluation_status = "completed"
+    if not metrics and not speaking_resp.free_transcription_text:
+        evaluation_status = "failed"
+    elif not metrics:
+        evaluation_status = "partial"
+    raw_json = metrics.raw_speech_result_json if metrics else None
+    comparison = raw_json.get("comparison") if raw_json else None
+    review = raw_json.get("review") if raw_json else None
+
+    return SpeakingResponseResponse(
+        response_id=speaking_resp.id,
+        exercise_attempt_id=speaking_resp.exercise_attempt_id,
+        audio_blob_path=speaking_resp.audio_blob_path,
+        original_filename=speaking_resp.original_filename,
+        content_type=speaking_resp.content_type,
+        duration_ms=speaking_resp.duration_ms,
+        free_transcription_text=speaking_resp.free_transcription_text,
+        assessment_recognized_text=speaking_resp.assessment_recognized_text,
+        recognized_text=speaking_resp.recognized_text,
+        pronunciation_score=metrics.pronunciation_score if metrics else None,
+        accuracy_score=metrics.accuracy_score if metrics else None,
+        fluency_score=metrics.fluency_score if metrics else None,
+        completeness_score=metrics.completeness_score if metrics else None,
+        prosody_score=metrics.prosody_score if metrics else None,
+        evaluation_status=evaluation_status,
+        comparison=comparison,
+        review=review,
+        error_message=None,
     )
 
 
