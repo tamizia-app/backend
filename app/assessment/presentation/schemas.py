@@ -246,6 +246,13 @@ class WritingMetricsResponse(BaseModel):
     writing_area_usage: float | None = None
     confidence_avg: float | None = None
     raw_ocr_result_json: dict | None = None
+    cer: float | None = None
+    wer: float | None = None
+    similarity_score: float | None = None
+    review_required: bool | None = None
+    review_reasons: list[str] | None = None
+    char_accuracy: float | None = None
+    word_accuracy: float | None = None
 
 
 class WritingResponseResponse(BaseModel):

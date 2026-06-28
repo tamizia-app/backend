@@ -3238,3 +3238,267 @@ def test_upload_writing_with_ocr_empty_text_falls_back_to_answered(client, teach
         assert detail["exercise_attempts"][0]["status"] == "ANSWERED"
     finally:
         get_settings.cache_clear()
+
+
+# ── Writing text comparison unit tests ──────────────────────────────────
+
+def test_normalize_text_lowercases():
+    from app.assessment.domain.writing_text_comparison import normalize_text
+    assert normalize_text("EL GATO") == "el gato"
+
+
+def test_normalize_text_removes_punctuation():
+    from app.assessment.domain.writing_text_comparison import normalize_text
+    assert normalize_text("¡Hola, mundo!") == "hola mundo"
+
+
+def test_normalize_text_collapses_spaces():
+    from app.assessment.domain.writing_text_comparison import normalize_text
+    assert normalize_text("el   gato  duerme") == "el gato duerme"
+
+
+def test_normalize_text_preserves_spanish_chars():
+    from app.assessment.domain.writing_text_comparison import normalize_text
+    assert normalize_text("Muñoz") == "muñoz"
+
+
+def test_levenshtein_equal():
+    from app.assessment.domain.writing_text_comparison import levenshtein_distance
+    assert levenshtein_distance("gato", "gato") == 0
+
+
+def test_levenshtein_one_substitution():
+    from app.assessment.domain.writing_text_comparison import levenshtein_distance
+    assert levenshtein_distance("gato", "pato") == 1
+
+
+def test_levenshtein_one_insertion():
+    from app.assessment.domain.writing_text_comparison import levenshtein_distance
+    assert levenshtein_distance("gato", "gatos") == 1
+
+
+def test_levenshtein_one_deletion():
+    from app.assessment.domain.writing_text_comparison import levenshtein_distance
+    assert levenshtein_distance("gato", "gat") == 1
+
+
+def test_levenshtein_completely_different():
+    from app.assessment.domain.writing_text_comparison import levenshtein_distance
+    assert levenshtein_distance("abc", "xyz") == 3
+
+
+def test_cer_perfect():
+    from app.assessment.domain.writing_text_comparison import calculate_cer
+    assert calculate_cer("El gato duerme.", "El gato duerme.") == 0.0
+
+
+def test_cer_missing_letter():
+    from app.assessment.domain.writing_text_comparison import calculate_cer
+    cer = calculate_cer("El gato duerme.", "El gato duerm")
+    assert cer == 0.071  # 1 / 14
+
+
+def test_cer_empty_recognized():
+    from app.assessment.domain.writing_text_comparison import calculate_cer
+    assert calculate_cer("El gato duerme.", "") == 1.0
+
+
+def test_cer_both_empty():
+    from app.assessment.domain.writing_text_comparison import calculate_cer
+    assert calculate_cer("", "") == 0.0
+
+
+def test_wer_perfect():
+    from app.assessment.domain.writing_text_comparison import calculate_wer
+    assert calculate_wer("El gato duerme.", "El gato duerme.") == 0.0
+
+
+def test_wer_missing_word():
+    from app.assessment.domain.writing_text_comparison import calculate_wer
+    wer = calculate_wer("El gato duerme.", "El gato duerm")
+    assert wer == 0.333  # 1 wrong word out of 3
+
+
+def test_wer_completely_different():
+    from app.assessment.domain.writing_text_comparison import calculate_wer
+    wer = calculate_wer("El gato duerme.", "La casa duerme")
+    assert wer == 0.667  # 2 out of 3 words wrong
+
+
+def test_wer_empty_recognized():
+    from app.assessment.domain.writing_text_comparison import calculate_wer
+    assert calculate_wer("El gato duerme.", "") == 1.0
+
+
+def test_wer_both_empty():
+    from app.assessment.domain.writing_text_comparison import calculate_wer
+    assert calculate_wer("", "") == 0.0
+
+
+def test_similarity_score_perfect():
+    from app.assessment.domain.writing_text_comparison import calculate_similarity_score
+    assert calculate_similarity_score(0.0, 0.0) == 100.0
+
+
+def test_similarity_score_half():
+    from app.assessment.domain.writing_text_comparison import calculate_similarity_score
+    score = calculate_similarity_score(0.50, 0.50)
+    assert score == 50.0  # 0.75*50 + 0.25*50
+
+
+def test_similarity_score_missing_letter():
+    from app.assessment.domain.writing_text_comparison import calculate_similarity_score
+    # cer=0.071, wer=0.333
+    score = calculate_similarity_score(0.071, 0.333)
+    # char_score = 100*(1-0.071)=92.9, word_score = 100*(1-0.333)=66.7
+    # similarity = 0.75*92.9 + 0.25*66.7 = 69.675 + 16.675 = 86.35
+    assert score == 86.35
+
+
+def test_review_perfect_no_review():
+    from app.assessment.domain.writing_text_comparison import determine_writing_review
+    result = determine_writing_review("El gato duerme.", "El gato duerme.", confidence_avg=0.95)
+    assert result.review_required is False
+    assert result.review_reasons == []
+
+
+def test_review_missing_letter_no_review():
+    from app.assessment.domain.writing_text_comparison import determine_writing_review
+    result = determine_writing_review("El gato duerme.", "El gato duerm", confidence_avg=0.948)
+    assert result.review_required is False
+    assert result.cer == 0.071
+    assert result.wer == 0.333
+    assert result.similarity_score == 86.35
+
+
+def test_review_empty_recognized():
+    from app.assessment.domain.writing_text_comparison import determine_writing_review
+    result = determine_writing_review("El gato duerme.", "")
+    assert result.review_required is True
+    assert "EMPTY_RECOGNIZED_TEXT" in result.review_reasons
+
+
+def test_review_low_confidence():
+    from app.assessment.domain.writing_text_comparison import determine_writing_review
+    result = determine_writing_review("El gato duerme.", "El gato duerme.", confidence_avg=0.50)
+    assert result.review_required is True
+    assert "LOW_OCR_CONFIDENCE" in result.review_reasons
+
+
+def test_review_low_similarity():
+    from app.assessment.domain.writing_text_comparison import determine_writing_review
+    result = determine_writing_review("El gato duerme.", "La casa duerme", confidence_avg=0.95)
+    assert result.review_required is True
+    assert "LOW_TEXT_SIMILARITY" in result.review_reasons
+
+
+def test_review_high_cer():
+    from app.assessment.domain.writing_text_comparison import determine_writing_review
+    result = determine_writing_review("El gato duerme.", "xyz xyz xyz")
+    assert result.review_required is True
+    assert "HIGH_CHARACTER_ERROR_RATE" in result.review_reasons
+
+
+def test_review_high_wer():
+    from app.assessment.domain.writing_text_comparison import determine_writing_review
+    # Make char_accuracy < 85 and wer >= 0.50
+    result = determine_writing_review("El gato duerme.", "perro casa")
+    assert result.review_required is True
+    assert "HIGH_WORD_ERROR_RATE" in result.review_reasons
+
+
+def test_char_accuracy_perfect():
+    from app.assessment.domain.writing_text_comparison import char_accuracy
+    assert char_accuracy(0.0) == 100.0
+
+
+def test_word_accuracy_perfect():
+    from app.assessment.domain.writing_text_comparison import word_accuracy
+    assert word_accuracy(0.0) == 100.0
+
+
+def test_char_accuracy_half():
+    from app.assessment.domain.writing_text_comparison import char_accuracy
+    assert char_accuracy(0.333) == 66.7
+
+
+def test_word_accuracy_half():
+    from app.assessment.domain.writing_text_comparison import word_accuracy
+    assert word_accuracy(0.333) == 66.7
+
+
+# ── Writing text comparison integration tests ────────────────────────────
+
+def test_upload_writing_with_ocr_saves_comparison_metrics(client, teacher_headers, classroom_id, student_id, monkeypatch):
+    from app.assessment.infrastructure.adapters.azure_vision_ocr import AzureVisionOcrAdapter
+    from app.assessment.application.ports.ocr_service import OcrResult
+    from app.core.config import get_settings
+
+    def mock_extract_text(self, image_data):
+        return OcrResult(full_text="El gato duerm", confidence_avg=0.948, raw_response={"blocks": []})
+
+    monkeypatch.setattr(AzureVisionOcrAdapter, "extract_text", mock_extract_text)
+    monkeypatch.setenv("AZURE_VISION_ENDPOINT", "https://fake.endpoint")
+    monkeypatch.setenv("AZURE_VISION_KEY", "fake-key")
+    get_settings.cache_clear()
+
+    try:
+        _, ea_id = _create_writing_setup(client, teacher_headers, classroom_id, student_id)
+        resp = client.post(
+            f"/api/v1/assessments/exercise-attempts/{ea_id}/writing-response",
+            headers=teacher_headers,
+            files={"file": ("writing.png", b"fake-png-content", "image/png")},
+            data={"payload_json": SAMPLE_PAYLOAD_JSON},
+        )
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["recognized_text"] == "El gato duerm"
+        assert data["metrics"]["confidence_avg"] == 0.948
+        assert data["metrics"]["raw_ocr_result_json"] is not None
+        assert data["metrics"]["cer"] == 0.071
+        assert data["metrics"]["wer"] == 0.333
+        assert data["metrics"]["similarity_score"] == 86.35
+    finally:
+        get_settings.cache_clear()
+
+
+def test_get_writing_response_returns_comparison_fields(client, teacher_headers, classroom_id, student_id, monkeypatch):
+    from app.assessment.infrastructure.adapters.azure_vision_ocr import AzureVisionOcrAdapter
+    from app.assessment.application.ports.ocr_service import OcrResult
+    from app.core.config import get_settings
+
+    def mock_extract_text(self, image_data):
+        return OcrResult(full_text="El gato duerme.", confidence_avg=0.95, raw_response={"blocks": []})
+
+    monkeypatch.setattr(AzureVisionOcrAdapter, "extract_text", mock_extract_text)
+    monkeypatch.setenv("AZURE_VISION_ENDPOINT", "https://fake.endpoint")
+    monkeypatch.setenv("AZURE_VISION_KEY", "fake-key")
+    get_settings.cache_clear()
+
+    try:
+        _, ea_id = _create_writing_setup(client, teacher_headers, classroom_id, student_id)
+        client.post(
+            f"/api/v1/assessments/exercise-attempts/{ea_id}/writing-response",
+            headers=teacher_headers,
+            files={"file": ("writing.png", b"fake-png-content", "image/png")},
+            data={"payload_json": SAMPLE_PAYLOAD_JSON},
+        )
+
+        resp = client.get(
+            f"/api/v1/assessments/exercise-attempts/{ea_id}/writing-response",
+            headers=teacher_headers,
+        )
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["recognized_text"] == "El gato duerme."
+        m = data["metrics"]
+        assert m is not None
+        assert m["cer"] == 0.0
+        assert m["wer"] == 0.0
+        assert m["similarity_score"] == 100.0
+        assert m["review_required"] is False
+        assert m["review_reasons"] == []
+        assert m["char_accuracy"] == 100.0
+        assert m["word_accuracy"] == 100.0
+    finally:
+        get_settings.cache_clear()

@@ -82,6 +82,7 @@ from app.assessment.infrastructure.repositories.assessment_repositories import (
     SQLAlchemyMCQuestionRepository,
     SQLAlchemyMCResponseRepository,
     SQLAlchemyOSAnswerRepository,
+    SQLAlchemyExpectedAnswerRepository,
     SQLAlchemyOSQuestionRepository,
     SQLAlchemyOSResponseRepository,
     SQLAlchemyPromptExerciseRepository,
@@ -95,6 +96,7 @@ from app.assessment.infrastructure.repositories.assessment_repositories import (
 from app.assessment.domain.enums import ExerciseType
 from app.assessment.domain.question import MCQuestion
 from app.assessment.domain.metrics import AssessmentResult as AssessmentResultDomain
+from app.assessment.domain.writing_text_comparison import char_accuracy, word_accuracy
 from app.assessment.presentation.schemas import (
     AssessmentResponse,
     AssessmentResultResponse,
@@ -963,6 +965,8 @@ def upload_writing_response(
         writing_metrics_repo=SQLAlchemyWritingMetricsRepository(db),
         blob_storage=AzureAssessmentBlobStorage(settings),
         ocr_service=ocr_service,
+        prompt_exercise_repo=SQLAlchemyPromptExerciseRepository(db),
+        expected_answer_repo=SQLAlchemyExpectedAnswerRepository(db),
     )
     try:
         result = uc.execute(
@@ -991,6 +995,18 @@ def upload_writing_response(
         metrics_repo = SQLAlchemyWritingMetricsRepository(db)
         metrics = metrics_repo.find_by_writing_response_id(result.response_id)
         if metrics:
+            _cer, _wer, _sim = metrics.cer, metrics.wer, metrics.similarity_score
+            _c_acc = char_accuracy(_cer) if _cer is not None else None
+            _w_acc = word_accuracy(_wer) if _wer is not None else None
+            _reasons: list[str] = []
+            if metrics.confidence_avg is not None and metrics.confidence_avg < 0.70:
+                _reasons.append("LOW_OCR_CONFIDENCE")
+            if _sim is not None and _sim < 75:
+                _reasons.append("LOW_TEXT_SIMILARITY")
+            if _cer is not None and _cer >= 0.25:
+                _reasons.append("HIGH_CHARACTER_ERROR_RATE")
+            if _wer is not None and _wer >= 0.50 and _c_acc is not None and _c_acc < 85:
+                _reasons.append("HIGH_WORD_ERROR_RATE")
             metrics_response = WritingMetricsResponse(
                 duration_ms=metrics.duration_ms,
                 stroke_count=metrics.stroke_count,
@@ -1007,6 +1023,13 @@ def upload_writing_response(
                 writing_area_usage=metrics.writing_area_usage,
                 confidence_avg=metrics.confidence_avg,
                 raw_ocr_result_json=metrics.raw_ocr_result_json,
+                cer=_cer,
+                wer=_wer,
+                similarity_score=_sim,
+                review_required=len(_reasons) > 0,
+                review_reasons=_reasons,
+                char_accuracy=_c_acc,
+                word_accuracy=_w_acc,
             )
     except Exception:
         pass
@@ -1058,6 +1081,18 @@ def get_writing_response(
 
     metrics_response = None
     if metrics:
+        _cer, _wer, _sim = metrics.cer, metrics.wer, metrics.similarity_score
+        _c_acc = char_accuracy(_cer) if _cer is not None else None
+        _w_acc = word_accuracy(_wer) if _wer is not None else None
+        _reasons: list[str] = []
+        if metrics.confidence_avg is not None and metrics.confidence_avg < 0.70:
+            _reasons.append("LOW_OCR_CONFIDENCE")
+        if _sim is not None and _sim < 75:
+            _reasons.append("LOW_TEXT_SIMILARITY")
+        if _cer is not None and _cer >= 0.25:
+            _reasons.append("HIGH_CHARACTER_ERROR_RATE")
+        if _wer is not None and _wer >= 0.50 and _c_acc is not None and _c_acc < 85:
+            _reasons.append("HIGH_WORD_ERROR_RATE")
         metrics_response = WritingMetricsResponse(
             duration_ms=metrics.duration_ms,
             stroke_count=metrics.stroke_count,
@@ -1074,6 +1109,13 @@ def get_writing_response(
             writing_area_usage=metrics.writing_area_usage,
             confidence_avg=metrics.confidence_avg,
             raw_ocr_result_json=metrics.raw_ocr_result_json,
+            cer=_cer,
+            wer=_wer,
+            similarity_score=_sim,
+            review_required=len(_reasons) > 0,
+            review_reasons=_reasons,
+            char_accuracy=_c_acc,
+            word_accuracy=_w_acc,
         )
 
     return WritingResponseResponse(

@@ -14,11 +14,14 @@ from app.assessment.application.ports.repositories import (
     AssessmentRepository,
     ExerciseAttemptRepository,
     ExerciseRepository,
+    ExpectedAnswerRepository,
+    PromptExerciseRepository,
     TemplateExerciseRepository,
     WritingMetricsRepository,
     WritingResponseRepository,
 )
 from app.assessment.application.results import WritingResponseResult
+from app.assessment.domain.writing_text_comparison import determine_writing_review
 from app.assessment.domain.enums import ExerciseAttemptStatus, ExerciseType
 from app.assessment.domain.metrics import WritingMetrics
 from app.assessment.domain.response import WritingResponse
@@ -45,6 +48,8 @@ class UploadWritingResponseUseCase:
         writing_metrics_repo: WritingMetricsRepository,
         blob_storage: AssessmentBlobStorage,
         ocr_service: OcrService | None = None,
+        prompt_exercise_repo: PromptExerciseRepository | None = None,
+        expected_answer_repo: ExpectedAnswerRepository | None = None,
     ) -> None:
         self._exercise_attempt_repo = exercise_attempt_repo
         self._template_exercise_repo = template_exercise_repo
@@ -55,6 +60,8 @@ class UploadWritingResponseUseCase:
         self._writing_metrics_repo = writing_metrics_repo
         self._blob_storage = blob_storage
         self._ocr_service = ocr_service
+        self._prompt_exercise_repo = prompt_exercise_repo
+        self._expected_answer_repo = expected_answer_repo
 
     def execute(self, command: UploadWritingResponseCommand) -> WritingResponseResult:
         ea = self._exercise_attempt_repo.find_by_id(command.exercise_attempt_id)
@@ -141,6 +148,18 @@ class UploadWritingResponseUseCase:
             ocr_metrics["confidence_avg"] = ocr_result.confidence_avg
             ocr_metrics["raw_ocr_result_json"] = ocr_result.raw_response
 
+        # Run text comparison if we have both expected and recognized text
+        expected_text = self._get_expected_text(te)
+        if expected_text and recognized_text:
+            review = determine_writing_review(
+                expected=expected_text,
+                recognized=recognized_text,
+                confidence_avg=ocr_result.confidence_avg if ocr_result else None,
+            )
+            ocr_metrics["cer"] = review.cer
+            ocr_metrics["wer"] = review.wer
+            ocr_metrics["similarity_score"] = review.similarity_score
+
         if frontend_metrics or ocr_metrics:
             metrics_data = self._extract_metrics(frontend_metrics or {})
             metrics_data.update(ocr_metrics)
@@ -176,6 +195,17 @@ class UploadWritingResponseUseCase:
         self._exercise_attempt_repo.update(ea)
 
         return WritingResponseAssembler.to_result(response)
+
+    def _get_expected_text(self, te) -> str | None:
+        if not self._prompt_exercise_repo or not self._expected_answer_repo:
+            return None
+        prompt = self._prompt_exercise_repo.find_by_exercise_id(te.exercise_id)
+        if not prompt:
+            return None
+        answer = self._expected_answer_repo.find_by_prompt_exercise_id(prompt.id)
+        if not answer:
+            return None
+        return answer.expected_text
 
     @staticmethod
     def _extract_metrics(m: dict) -> dict:
