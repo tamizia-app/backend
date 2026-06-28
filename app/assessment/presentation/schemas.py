@@ -191,3 +191,52 @@ class AssessmentResultResponse(BaseModel):
 
 class DownloadUrlResponse(BaseModel):
     download_url: str
+
+
+class PronunciationWordResponse(BaseModel):
+    word: str | None
+    accuracy_score: float | None
+    error_type: str | None
+    offset: int | None
+    duration: int | None
+    phonemes: list[dict]
+
+
+class PronunciationScoresResponse(BaseModel):
+    accuracy_score: float | None
+    fluency_score: float | None
+    completeness_score: float | None
+    pronunciation_score: float | None
+    prosody_score: float | None
+    prosody_supported: bool
+    words: list[PronunciationWordResponse]
+
+
+class PronunciationAssessmentResponse(BaseModel):
+    status: str
+    stt_status: str
+    pronunciation_status: str
+    expected_text: str | None
+    recognized_text: str | None
+    stt_recognized_text: str | None
+    assessment_recognized_text: str | None
+    assessment_display_text: str | None
+    assessment_lexical_text: str | None
+    stt: dict
+    locale: str | None
+    pronunciation_assessment: dict
+    comparison: dict | None
+    review: dict
+    diagnostics: dict
+    error: dict | None
+    language_code: str | None
+    duration_ms: int | None
+    error_message: str | None
+    pronunciation_score: float | None
+    accuracy_score: float | None
+    fluency_score: float | None
+    completeness_score: float | None
+    prosody_score: float | None
+    missing_fields: list[str]
+    azure_config_used: dict | None = None
+    raw_result_json: dict | None = None

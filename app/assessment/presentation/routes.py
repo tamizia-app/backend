@@ -1,10 +1,13 @@
-import json
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, Form, HTTPException, UploadFile, status
 from sqlalchemy.orm import Session
 
 from app.assessment.application.exceptions import AssessmentException
+from app.assessment.application.use_cases.assess_reading_pipeline import (
+    AssessReadingCommand,
+    AssessReadingPipelineUseCase,
+)
 from app.assessment.application.use_cases.attach_exercise_to_template import (
     AttachExerciseCommand,
     AttachExerciseToTemplateUseCase,
@@ -55,6 +58,14 @@ from app.assessment.infrastructure.adapters.assessment_blob_storage import (
 from app.assessment.infrastructure.adapters.azure_speech import (
     AzureSpeechPronunciationAssessmentService,
 )
+from app.assessment.infrastructure.adapters.faster_whisper_stt import (
+    FasterWhisperSpeechToTextAdapter,
+    WhisperConfig,
+)
+from app.assessment.infrastructure.audio_processing import (
+    AssessmentAudioProcessor,
+    AudioProcessingError,
+)
 from app.assessment.infrastructure.repositories.assessment_repositories import (
     SQLAlchemyAssessmentAttemptRepository,
     SQLAlchemyAssessmentRepository,
@@ -88,6 +99,7 @@ from app.assessment.presentation.schemas import (
     ExerciseResponse,
     MCResponseResponse,
     OSResponseResponse,
+    PronunciationAssessmentResponse,
     SpeakingResponseResponse,
     StartAttemptRequest,
     SubmitMCResponseRequest,
@@ -757,11 +769,14 @@ def _reject_if_production() -> None:
         raise HTTPException(status_code=403, detail="Not available in production environment")
 
 
-@router.post("/dev/speech/pronunciation-assessment")
-def dev_pronunciation_assessment(
+@router.post(
+    "/dev/speech/pronunciation-assessment",
+    response_model=PronunciationAssessmentResponse,
+)
+async def dev_pronunciation_assessment(
     file: UploadFile,
     reference_text: str = Form(...),
-    language_code: str = Form("es-PE"),
+    language_code: str | None = Form(None),
     current_user: UserModel = Depends(get_current_user),
 ) -> dict:
     _reject_if_production()
@@ -770,51 +785,40 @@ def dev_pronunciation_assessment(
     if not content:
         raise HTTPException(status_code=400, detail="Empty audio file")
 
-    service = AzureSpeechPronunciationAssessmentService(get_settings())
-    result = service.assess_pronunciation(
-        audio_content=content,
-        reference_text=reference_text,
-        language_code=language_code,
-    )
-
-    missing_fields = [
-        k for k, v in {
-            "pronunciation_score": result.pronunciation_score,
-            "accuracy_score": result.accuracy_score,
-            "fluency_score": result.fluency_score,
-            "completeness_score": result.completeness_score,
-            "prosody_score": result.prosody_score,
-        }.items() if v is None
-    ]
-
-    cfg = get_settings()
-    azure_config_used = {
-        "endpoint": bool(cfg.azure_speech_endpoint),
-        "region": cfg.azure_speech_region or "centralus",
-        "key_configured": bool(cfg.azure_speech_key),
+    if not reference_text.strip():
+        raise HTTPException(status_code=422, detail="Expected text must not be empty")
+    try:
+        whisper_config = WhisperConfig.from_environment()
+        pipeline = AssessReadingPipelineUseCase(
+            audio_processor=AssessmentAudioProcessor(),
+            stt_service=FasterWhisperSpeechToTextAdapter(whisper_config),
+            pronunciation_service=AzureSpeechPronunciationAssessmentService(
+                get_settings()
+            ),
+            low_logprob_threshold=whisper_config.low_confidence_threshold,
+        )
+        response = await pipeline.execute(
+            AssessReadingCommand(
+                audio_content=content,
+                expected_text=reference_text,
+                assessment_locale=language_code,
+                audio_format=file.content_type or file.filename,
+            )
+        )
+    except (AudioProcessingError, ValueError) as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    response["azure_config_used"] = {
+        "region": get_settings().azure_speech_region,
+        "key_configured": bool(get_settings().azure_speech_key),
     }
-
-    return {
-        "recognized_text": result.recognized_text,
-        "pronunciation_score": result.pronunciation_score,
-        "accuracy_score": result.accuracy_score,
-        "fluency_score": result.fluency_score,
-        "completeness_score": result.completeness_score,
-        "prosody_score": result.prosody_score,
-        "raw_result_json": result.raw_result_json,
-        "missing_fields": missing_fields,
-        "language_code": result.language_code,
-        "duration_ms": result.duration_ms,
-        "error_message": result.error_message,
-        "azure_config_used": azure_config_used,
-    }
+    return response
 
 
 @router.post("/dev/speech/compare-languages")
 def dev_compare_languages(
     file: UploadFile,
     reference_text: str = Form(...),
-    language_codes: str = Form("es-PE,es-ES,es-MX,en-US"),
+    language_codes: str = Form("es-MX,es-ES"),
     current_user: UserModel = Depends(get_current_user),
 ) -> dict:
     _reject_if_production()
@@ -832,36 +836,17 @@ def dev_compare_languages(
             audio_content=content,
             reference_text=reference_text,
             language_code=lang,
+            audio_format=file.content_type or file.filename,
         )
-        missing = [
-            k for k, v in {
-                "pronunciation_score": result.pronunciation_score,
-                "accuracy_score": result.accuracy_score,
-                "fluency_score": result.fluency_score,
-                "completeness_score": result.completeness_score,
-                "prosody_score": result.prosody_score,
-            }.items() if v is None
-        ]
-        results[lang] = {
-            "recognized_text": result.recognized_text,
-            "pronunciation_score": result.pronunciation_score,
-            "accuracy_score": result.accuracy_score,
-            "fluency_score": result.fluency_score,
-            "completeness_score": result.completeness_score,
-            "prosody_score": result.prosody_score,
-            "missing_fields": missing,
-            "duration_ms": result.duration_ms,
-            "error_message": result.error_message,
-            "raw_result_json": result.raw_result_json if len(json.dumps(result.raw_result_json, default=str)) < 10000 else {"truncated": True},
-        }
+        results[lang] = result.to_dict(include_raw=True)
 
     return {
+        "expected_text": reference_text,
         "reference_text": reference_text,
         "audio_filename": file.filename,
         "results": results,
         "azure_config_used": {
-            "endpoint": bool(get_settings().azure_speech_endpoint),
-            "region": get_settings().azure_speech_region or "centralus",
+            "region": get_settings().azure_speech_region,
             "key_configured": bool(get_settings().azure_speech_key),
         },
     }

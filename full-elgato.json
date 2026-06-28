@@ -1,0 +1,722 @@
+{
+  "status": "completed",
+  "stt_status": "completed",
+  "pronunciation_status": "completed",
+  "expected_text": "El gato está en casa",
+  "recognized_text": "el gato está en la casa",
+  "stt_recognized_text": "el gato está en la casa",
+  "assessment_recognized_text": "El gato está en casa casa.",
+  "assessment_display_text": "El gato está en casa casa.",
+  "assessment_lexical_text": "El gato está en casa casa",
+  "stt": {
+    "status": "completed",
+    "text": "el gato está en la casa",
+    "language": "es",
+    "language_probability": 1.0,
+    "duration_seconds": 3.7158125,
+    "segments": [
+      {
+        "text": "el gato está en la casa",
+        "start_seconds": 0.0,
+        "end_seconds": 2.38,
+        "avg_logprob": -0.48566082715988157,
+        "no_speech_prob": 0.09227073937654495,
+        "words": [
+          {
+            "text": "el",
+            "start_seconds": 0.0,
+            "end_seconds": 0.82,
+            "probability": 0.5543733835220337
+          },
+          {
+            "text": "gato",
+            "start_seconds": 0.82,
+            "end_seconds": 1.32,
+            "probability": 0.9805460572242737
+          },
+          {
+            "text": "está",
+            "start_seconds": 1.32,
+            "end_seconds": 1.64,
+            "probability": 0.6262153387069702
+          },
+          {
+            "text": "en",
+            "start_seconds": 1.64,
+            "end_seconds": 1.88,
+            "probability": 0.9671205282211304
+          },
+          {
+            "text": "la",
+            "start_seconds": 1.88,
+            "end_seconds": 2.0,
+            "probability": 0.9903603792190552
+          },
+          {
+            "text": "casa",
+            "start_seconds": 2.0,
+            "end_seconds": 2.38,
+            "probability": 0.9967411160469055
+          }
+        ]
+      }
+    ],
+    "provider": "faster_whisper",
+    "model": "small",
+    "warnings": [],
+    "confidence_heuristic": null,
+    "processing_time_ms": 1797,
+    "model_load_time_ms": 1615,
+    "real_time_factor": 0.4836
+  },
+  "pronunciation_assessment": {
+    "status": "completed",
+    "provider": "azure_speech",
+    "locale": "es-MX",
+    "recognized_text": "El gato está en casa casa.",
+    "display_text": "El gato está en casa casa.",
+    "lexical_text": "El gato está en casa casa",
+    "accuracy_score": 97.0,
+    "fluency_score": 94.0,
+    "completeness_score": 100.0,
+    "pronunciation_score": 95.8,
+    "prosody_score": null,
+    "prosody_supported": false,
+    "words": [
+      {
+        "word": "El",
+        "accuracy_score": 95.0,
+        "error_type": "None",
+        "offset": 4200000,
+        "duration": 5700000,
+        "phonemes": [
+          {
+            "phoneme": "",
+            "accuracy_score": 85.0,
+            "offset": 4200000,
+            "duration": 4100000
+          },
+          {
+            "phoneme": "",
+            "accuracy_score": 100.0,
+            "offset": 8400000,
+            "duration": 1500000
+          }
+        ]
+      },
+      {
+        "word": "gato",
+        "accuracy_score": 99.0,
+        "error_type": "None",
+        "offset": 10000000,
+        "duration": 4400000,
+        "phonemes": [
+          {
+            "phoneme": "",
+            "accuracy_score": 99.0,
+            "offset": 10000000,
+            "duration": 1300000
+          },
+          {
+            "phoneme": "",
+            "accuracy_score": 99.0,
+            "offset": 11400000,
+            "duration": 1100000
+          },
+          {
+            "phoneme": "",
+            "accuracy_score": 99.0,
+            "offset": 12600000,
+            "duration": 900000
+          },
+          {
+            "phoneme": "",
+            "accuracy_score": 99.0,
+            "offset": 13600000,
+            "duration": 800000
+          }
+        ]
+      },
+      {
+        "word": "está",
+        "accuracy_score": 99.0,
+        "error_type": "None",
+        "offset": 14500000,
+        "duration": 3600000,
+        "phonemes": [
+          {
+            "phoneme": "",
+            "accuracy_score": 100.0,
+            "offset": 14500000,
+            "duration": 800000
+          },
+          {
+            "phoneme": "",
+            "accuracy_score": 89.0,
+            "offset": 15400000,
+            "duration": 700000
+          },
+          {
+            "phoneme": "",
+            "accuracy_score": 94.0,
+            "offset": 16200000,
+            "duration": 900000
+          },
+          {
+            "phoneme": "",
+            "accuracy_score": 100.0,
+            "offset": 17200000,
+            "duration": 900000
+          }
+        ]
+      },
+      {
+        "word": "en",
+        "accuracy_score": 99.0,
+        "error_type": "None",
+        "offset": 18200000,
+        "duration": 1200000,
+        "phonemes": [
+          {
+            "phoneme": "",
+            "accuracy_score": 100.0,
+            "offset": 18200000,
+            "duration": 900000
+          },
+          {
+            "phoneme": "",
+            "accuracy_score": 40.0,
+            "offset": 19200000,
+            "duration": 200000
+          }
+        ]
+      },
+      {
+        "word": "casa",
+        "accuracy_score": 31.0,
+        "error_type": "Insertion",
+        "offset": 19500000,
+        "duration": 1200000,
+        "phonemes": [
+          {
+            "phoneme": "",
+            "accuracy_score": 0.0,
+            "offset": 19500000,
+            "duration": 300000
+          },
+          {
+            "phoneme": "",
+            "accuracy_score": 0.0,
+            "offset": 19900000,
+            "duration": 200000
+          },
+          {
+            "phoneme": "",
+            "accuracy_score": 0.0,
+            "offset": 20200000,
+            "duration": 200000
+          },
+          {
+            "phoneme": "",
+            "accuracy_score": 0.0,
+            "offset": 20500000,
+            "duration": 200000
+          }
+        ]
+      },
+      {
+        "word": "casa",
+        "accuracy_score": 94.0,
+        "error_type": "None",
+        "offset": 20800000,
+        "duration": 6100000,
+        "phonemes": [
+          {
+            "phoneme": "",
+            "accuracy_score": 100.0,
+            "offset": 20800000,
+            "duration": 1300000
+          },
+          {
+            "phoneme": "",
+            "accuracy_score": 100.0,
+            "offset": 22200000,
+            "duration": 1500000
+          },
+          {
+            "phoneme": "",
+            "accuracy_score": 100.0,
+            "offset": 23800000,
+            "duration": 1100000
+          },
+          {
+            "phoneme": "",
+            "accuracy_score": 68.0,
+            "offset": 25000000,
+            "duration": 1900000
+          }
+        ]
+      }
+    ],
+    "session_id": "6b697a99ea9e4b22953790d6dcd20e9e",
+    "error": null
+  },
+  "comparison": {
+    "expected_text": "El gato está en casa",
+    "recognized_text": "el gato está en la casa",
+    "expected_normalized_text": "el gato está en casa",
+    "recognized_normalized_text": "el gato está en la casa",
+    "expected_word_count": 5,
+    "recognized_word_count": 6,
+    "matches": 5,
+    "substitutions": 0,
+    "omissions": 0,
+    "insertions": 1,
+    "lexical_match_percentage": 100.0,
+    "wer": 0.2,
+    "wer_percentage": 20.0,
+    "alignment": [
+      {
+        "expected": "El",
+        "recognized": "el",
+        "expected_normalized": "el",
+        "recognized_normalized": "el",
+        "operation": "match"
+      },
+      {
+        "expected": "gato",
+        "recognized": "gato",
+        "expected_normalized": "gato",
+        "recognized_normalized": "gato",
+        "operation": "match"
+      },
+      {
+        "expected": "está",
+        "recognized": "está",
+        "expected_normalized": "está",
+        "recognized_normalized": "está",
+        "operation": "match"
+      },
+      {
+        "expected": "en",
+        "recognized": "en",
+        "expected_normalized": "en",
+        "recognized_normalized": "en",
+        "operation": "match"
+      },
+      {
+        "expected": null,
+        "recognized": "la",
+        "expected_normalized": null,
+        "recognized_normalized": "la",
+        "operation": "insertion"
+      },
+      {
+        "expected": "casa",
+        "recognized": "casa",
+        "expected_normalized": "casa",
+        "recognized_normalized": "casa",
+        "operation": "match"
+      }
+    ],
+    "source": "expected_text_vs_faster_whisper"
+  },
+  "review": {
+    "required": false,
+    "reasons": []
+  },
+  "diagnostics": {
+    "audio_duration_ms": 3716,
+    "sample_rate_hz": 16000,
+    "channels": 1,
+    "bit_depth": 16,
+    "audio_normalized": false,
+    "original_audio": {
+      "extension": ".wav",
+      "codec": "pcm_s16le",
+      "sample_rate_hz": 16000,
+      "channels": 1,
+      "bit_depth": 16,
+      "duration_ms": 3716,
+      "size_bytes": 118950,
+      "format_name": "wav"
+    },
+    "normalized_audio": {
+      "extension": ".wav",
+      "codec": "pcm_s16le",
+      "sample_rate_hz": 16000,
+      "channels": 1,
+      "bit_depth": 16,
+      "duration_ms": 3716,
+      "size_bytes": 118950,
+      "format_name": "wav"
+    },
+    "processing_time_ms": 3590,
+    "stt_processing_time_ms": 3587,
+    "assessment_processing_time_ms": 1992,
+    "warnings": []
+  },
+  "pronunciation_score": 95.8,
+  "accuracy_score": 97.0,
+  "fluency_score": 94.0,
+  "completeness_score": 100.0,
+  "prosody_score": null,
+  "locale": "es-MX",
+  "language_code": "es-MX",
+  "duration_ms": 3716,
+  "raw_result_json": {
+    "Id": "72480f9a9b2747578d7c302c0dbad759",
+    "RecognitionStatus": "Success",
+    "Offset": 4200000,
+    "Duration": 22700000,
+    "Channel": 0,
+    "DisplayText": "El gato está en casa casa.",
+    "SNR": 18.033365,
+    "NBest": [
+      {
+        "Confidence": 0.93278956,
+        "Lexical": "El gato está en casa casa",
+        "ITN": "El gato está en casa casa",
+        "MaskedITN": "el gato está en casa casa",
+        "Display": "El gato está en casa casa.",
+        "PronunciationAssessment": {
+          "AccuracyScore": 97.0,
+          "FluencyScore": 94.0,
+          "CompletenessScore": 100.0,
+          "PronScore": 95.8
+        },
+        "Words": [
+          {
+            "Word": "El",
+            "Offset": 4200000,
+            "Duration": 5700000,
+            "Confidence": 0.0,
+            "PronunciationAssessment": {
+              "AccuracyScore": 95.0,
+              "ErrorType": "None"
+            },
+            "Syllables": [
+              {
+                "Syllable": "",
+                "PronunciationAssessment": {
+                  "AccuracyScore": 89.0
+                },
+                "Offset": 4200000,
+                "Duration": 5700000
+              }
+            ],
+            "Phonemes": [
+              {
+                "Phoneme": "",
+                "PronunciationAssessment": {
+                  "AccuracyScore": 85.0
+                },
+                "Offset": 4200000,
+                "Duration": 4100000
+              },
+              {
+                "Phoneme": "",
+                "PronunciationAssessment": {
+                  "AccuracyScore": 100.0
+                },
+                "Offset": 8400000,
+                "Duration": 1500000
+              }
+            ]
+          },
+          {
+            "Word": "gato",
+            "Offset": 10000000,
+            "Duration": 4400000,
+            "Confidence": 0.0,
+            "PronunciationAssessment": {
+              "AccuracyScore": 99.0,
+              "ErrorType": "None"
+            },
+            "Syllables": [
+              {
+                "Syllable": "",
+                "PronunciationAssessment": {
+                  "AccuracyScore": 99.0
+                },
+                "Offset": 10000000,
+                "Duration": 2500000
+              },
+              {
+                "Syllable": "",
+                "PronunciationAssessment": {
+                  "AccuracyScore": 99.0
+                },
+                "Offset": 12600000,
+                "Duration": 1800000
+              }
+            ],
+            "Phonemes": [
+              {
+                "Phoneme": "",
+                "PronunciationAssessment": {
+                  "AccuracyScore": 99.0
+                },
+                "Offset": 10000000,
+                "Duration": 1300000
+              },
+              {
+                "Phoneme": "",
+                "PronunciationAssessment": {
+                  "AccuracyScore": 99.0
+                },
+                "Offset": 11400000,
+                "Duration": 1100000
+              },
+              {
+                "Phoneme": "",
+                "PronunciationAssessment": {
+                  "AccuracyScore": 99.0
+                },
+                "Offset": 12600000,
+                "Duration": 900000
+              },
+              {
+                "Phoneme": "",
+                "PronunciationAssessment": {
+                  "AccuracyScore": 99.0
+                },
+                "Offset": 13600000,
+                "Duration": 800000
+              }
+            ]
+          },
+          {
+            "Word": "está",
+            "Offset": 14500000,
+            "Duration": 3600000,
+            "Confidence": 0.0,
+            "PronunciationAssessment": {
+              "AccuracyScore": 99.0,
+              "ErrorType": "None"
+            },
+            "Syllables": [
+              {
+                "Syllable": "",
+                "PronunciationAssessment": {
+                  "AccuracyScore": 95.0
+                },
+                "Offset": 14500000,
+                "Duration": 1600000
+              },
+              {
+                "Syllable": "",
+                "PronunciationAssessment": {
+                  "AccuracyScore": 97.0
+                },
+                "Offset": 16200000,
+                "Duration": 1900000
+              }
+            ],
+            "Phonemes": [
+              {
+                "Phoneme": "",
+                "PronunciationAssessment": {
+                  "AccuracyScore": 100.0
+                },
+                "Offset": 14500000,
+                "Duration": 800000
+              },
+              {
+                "Phoneme": "",
+                "PronunciationAssessment": {
+                  "AccuracyScore": 89.0
+                },
+                "Offset": 15400000,
+                "Duration": 700000
+              },
+              {
+                "Phoneme": "",
+                "PronunciationAssessment": {
+                  "AccuracyScore": 94.0
+                },
+                "Offset": 16200000,
+                "Duration": 900000
+              },
+              {
+                "Phoneme": "",
+                "PronunciationAssessment": {
+                  "AccuracyScore": 100.0
+                },
+                "Offset": 17200000,
+                "Duration": 900000
+              }
+            ]
+          },
+          {
+            "Word": "en",
+            "Offset": 18200000,
+            "Duration": 1200000,
+            "Confidence": 0.0,
+            "PronunciationAssessment": {
+              "AccuracyScore": 99.0,
+              "ErrorType": "None"
+            },
+            "Syllables": [
+              {
+                "Syllable": "",
+                "PronunciationAssessment": {
+                  "AccuracyScore": 86.0
+                },
+                "Offset": 18200000,
+                "Duration": 1200000
+              }
+            ],
+            "Phonemes": [
+              {
+                "Phoneme": "",
+                "PronunciationAssessment": {
+                  "AccuracyScore": 100.0
+                },
+                "Offset": 18200000,
+                "Duration": 900000
+              },
+              {
+                "Phoneme": "",
+                "PronunciationAssessment": {
+                  "AccuracyScore": 40.0
+                },
+                "Offset": 19200000,
+                "Duration": 200000
+              }
+            ]
+          },
+          {
+            "Word": "casa",
+            "Offset": 19500000,
+            "Duration": 1200000,
+            "Confidence": 0.0,
+            "PronunciationAssessment": {
+              "AccuracyScore": 31.0,
+              "ErrorType": "Insertion"
+            },
+            "Syllables": [
+              {
+                "Syllable": "",
+                "PronunciationAssessment": {
+                  "AccuracyScore": 0.0
+                },
+                "Offset": 19500000,
+                "Duration": 600000
+              },
+              {
+                "Syllable": "",
+                "PronunciationAssessment": {
+                  "AccuracyScore": 0.0
+                },
+                "Offset": 20200000,
+                "Duration": 500000
+              }
+            ],
+            "Phonemes": [
+              {
+                "Phoneme": "",
+                "PronunciationAssessment": {
+                  "AccuracyScore": 0.0
+                },
+                "Offset": 19500000,
+                "Duration": 300000
+              },
+              {
+                "Phoneme": "",
+                "PronunciationAssessment": {
+                  "AccuracyScore": 0.0
+                },
+                "Offset": 19900000,
+                "Duration": 200000
+              },
+              {
+                "Phoneme": "",
+                "PronunciationAssessment": {
+                  "AccuracyScore": 0.0
+                },
+                "Offset": 20200000,
+                "Duration": 200000
+              },
+              {
+                "Phoneme": "",
+                "PronunciationAssessment": {
+                  "AccuracyScore": 0.0
+                },
+                "Offset": 20500000,
+                "Duration": 200000
+              }
+            ]
+          },
+          {
+            "Word": "casa",
+            "Offset": 20800000,
+            "Duration": 6100000,
+            "Confidence": 0.0,
+            "PronunciationAssessment": {
+              "AccuracyScore": 94.0,
+              "ErrorType": "None"
+            },
+            "Syllables": [
+              {
+                "Syllable": "",
+                "PronunciationAssessment": {
+                  "AccuracyScore": 100.0
+                },
+                "Offset": 20800000,
+                "Duration": 2900000
+              },
+              {
+                "Syllable": "",
+                "PronunciationAssessment": {
+                  "AccuracyScore": 80.0
+                },
+                "Offset": 23800000,
+                "Duration": 3100000
+              }
+            ],
+            "Phonemes": [
+              {
+                "Phoneme": "",
+                "PronunciationAssessment": {
+                  "AccuracyScore": 100.0
+                },
+                "Offset": 20800000,
+                "Duration": 1300000
+              },
+              {
+                "Phoneme": "",
+                "PronunciationAssessment": {
+                  "AccuracyScore": 100.0
+                },
+                "Offset": 22200000,
+                "Duration": 1500000
+              },
+              {
+                "Phoneme": "",
+                "PronunciationAssessment": {
+                  "AccuracyScore": 100.0
+                },
+                "Offset": 23800000,
+                "Duration": 1100000
+              },
+              {
+                "Phoneme": "",
+                "PronunciationAssessment": {
+                  "AccuracyScore": 68.0
+                },
+                "Offset": 25000000,
+                "Duration": 1900000
+              }
+            ]
+          }
+        ]
+      }
+    ]
+  },
+  "missing_fields": [
+    "prosody_score"
+  ],
+  "error_message": null,
+  "error": null
+}
