@@ -98,6 +98,12 @@ from app.assessment.domain.question import MCQuestion
 from app.assessment.domain.metrics import AssessmentResult as AssessmentResultDomain
 from app.assessment.domain.writing_text_comparison import char_accuracy, word_accuracy
 from app.assessment.presentation.schemas import (
+    AdminExerciseDetailResponse,
+    AdminExerciseListResponse,
+    AdminMCQuestionSchema,
+    AdminMCOptionSchema,
+    AdminOSQuestionSchema,
+    AdminPromptExerciseSchema,
     AssessmentResponse,
     AssessmentResultResponse,
     AttemptDetailResponse,
@@ -289,17 +295,70 @@ def create_exercise(
     )
 
 
-@router.get("/exercises/{exercise_id}", response_model=ExerciseResponse)
-def get_exercise(
-    exercise_id: UUID,
-    db: Session = Depends(get_db),
-    current_user: UserModel = Depends(get_current_user),
-) -> ExerciseResponse:
-    repo = SQLAlchemyExerciseRepository(db)
-    exercise = repo.find_by_id(exercise_id)
-    if not exercise:
-        raise HTTPException(status_code=404, detail="Exercise not found")
-    return ExerciseResponse(
+def _build_admin_exercise_detail(
+    exercise, mc_q_repo, mc_opt_repo, os_q_repo, os_a_repo, prompt_repo, expected_repo, db
+) -> AdminExerciseDetailResponse:
+    mc_question = None
+    os_question = None
+    prompt_exercise = None
+
+    if exercise.type == ExerciseType.MULTIPLE_CHOICE:
+        mc_q = mc_q_repo.find_by_exercise_id(exercise.id)
+        if mc_q:
+            options = mc_opt_repo.find_by_question_id(mc_q.id)
+            image_url = None
+            if mc_q.image_blob_path:
+                try:
+                    storage = AzureAssessmentBlobStorage(get_settings())
+                    image_url = storage.download_url(blob_path=mc_q.image_blob_path)
+                except Exception:
+                    pass
+            mc_question = AdminMCQuestionSchema(
+                mc_question_id=mc_q.id,
+                question_text=mc_q.question_text,
+                image_blob_path=mc_q.image_blob_path,
+                image_url=image_url,
+                options=[
+                    AdminMCOptionSchema(
+                        option_id=opt.id,
+                        text=opt.text,
+                        is_correct=opt.is_correct,
+                        order_index=opt.order_index,
+                    )
+                    for opt in options
+                ],
+            )
+    elif exercise.type == ExerciseType.ORDER_SYLLABLES:
+        os_q = os_q_repo.find_by_exercise_id(exercise.id)
+        if os_q:
+            os_a = os_a_repo.find_by_question_id(os_q.id)
+            os_question = AdminOSQuestionSchema(
+                os_question_id=os_q.id,
+                question_text=os_q.question_text,
+                image_blob_path=os_q.image_blob_path,
+                correct_word=os_a.correct_word if os_a else None,
+                syllables_json=os_a.syllables_json if os_a else [],
+            )
+    elif exercise.type in (
+        ExerciseType.READING_SPEAKING,
+        ExerciseType.LISTENING_SPEAKING,
+        ExerciseType.READING_WRITING,
+        ExerciseType.LISTENING_WRITING,
+    ):
+        prompt = prompt_repo.find_by_exercise_id(exercise.id)
+        if prompt:
+            expected = expected_repo.find_by_prompt_exercise_id(prompt.id)
+            prompt_exercise = AdminPromptExerciseSchema(
+                prompt_exercise_id=prompt.id,
+                prompt_text=prompt.prompt_text,
+                text_to_show=prompt.text_to_show,
+                audio_blob_path=prompt.audio_blob_path,
+                image_blob_path=prompt.image_blob_path,
+                language_code=prompt.language_code,
+                expected_text=expected.expected_text if expected else None,
+            )
+
+    return AdminExerciseDetailResponse(
         exercise_id=exercise.id,
         type=exercise.type.value,
         title=exercise.title,
@@ -311,6 +370,64 @@ def get_exercise(
         created_by_teacher_id=exercise.created_by_teacher_id,
         created_at=exercise.created_at,
         updated_at=exercise.updated_at,
+        mc_question=mc_question,
+        os_question=os_question,
+        prompt_exercise=prompt_exercise,
+    )
+
+
+@router.get("/exercises", response_model=AdminExerciseListResponse)
+def list_exercises(
+    type: str | None = None,
+    difficulty_level: int | None = None,
+    q: str | None = None,
+    limit: int = 100,
+    offset: int = 0,
+    db: Session = Depends(get_db),
+    current_user: UserModel = Depends(get_current_user),
+) -> AdminExerciseListResponse:
+    repo = SQLAlchemyExerciseRepository(db)
+    exercises = repo.find_all(
+        type_filter=type,
+        difficulty_level=difficulty_level,
+        q=q,
+        limit=limit,
+        offset=offset,
+    )
+    mc_q_repo = SQLAlchemyMCQuestionRepository(db)
+    mc_opt_repo = SQLAlchemyMCAnswerOptionRepository(db)
+    os_q_repo = SQLAlchemyOSQuestionRepository(db)
+    os_a_repo = SQLAlchemyOSAnswerRepository(db)
+    prompt_repo = SQLAlchemyPromptExerciseRepository(db)
+    expected_repo = SQLAlchemyExpectedAnswerRepository(db)
+
+    items = [
+        _build_admin_exercise_detail(
+            ex, mc_q_repo, mc_opt_repo, os_q_repo, os_a_repo, prompt_repo, expected_repo, db
+        )
+        for ex in exercises
+    ]
+    return AdminExerciseListResponse(items=items, total=len(items))
+
+
+@router.get("/exercises/{exercise_id}", response_model=AdminExerciseDetailResponse)
+def get_exercise(
+    exercise_id: UUID,
+    db: Session = Depends(get_db),
+    current_user: UserModel = Depends(get_current_user),
+) -> AdminExerciseDetailResponse:
+    repo = SQLAlchemyExerciseRepository(db)
+    exercise = repo.find_by_id(exercise_id)
+    if not exercise:
+        raise HTTPException(status_code=404, detail="Exercise not found")
+    mc_q_repo = SQLAlchemyMCQuestionRepository(db)
+    mc_opt_repo = SQLAlchemyMCAnswerOptionRepository(db)
+    os_q_repo = SQLAlchemyOSQuestionRepository(db)
+    os_a_repo = SQLAlchemyOSAnswerRepository(db)
+    prompt_repo = SQLAlchemyPromptExerciseRepository(db)
+    expected_repo = SQLAlchemyExpectedAnswerRepository(db)
+    return _build_admin_exercise_detail(
+        exercise, mc_q_repo, mc_opt_repo, os_q_repo, os_a_repo, prompt_repo, expected_repo, db
     )
 
 

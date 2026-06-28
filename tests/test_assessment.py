@@ -3768,6 +3768,285 @@ def test_finish_mixed_with_writing_enters_average(client, teacher_headers, class
         get_settings.cache_clear()
 
 
+# ─── Exercise GET endpoints (admin) tests ────────────────────────
+
+
+def test_list_exercises_returns_all(client, teacher_headers):
+    client.post(
+        "/api/v1/assessments/exercises",
+        headers=teacher_headers,
+        json={
+            "type": "MULTIPLE_CHOICE",
+            "title": "MC Alpha",
+            "mc_question": {
+                "question_text": "Q?",
+                "options": [{"text": "A", "is_correct": True, "order_index": 1}],
+            },
+        },
+    )
+    client.post(
+        "/api/v1/assessments/exercises",
+        headers=teacher_headers,
+        json={
+            "type": "ORDER_SYLLABLES",
+            "title": "OS Beta",
+            "os_question": {
+                "question_text": "Ordena",
+                "correct_word": "sol",
+                "syllables_json": ["sol"],
+            },
+        },
+    )
+
+    resp = client.get("/api/v1/assessments/exercises", headers=teacher_headers)
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["total"] == 2
+    assert len(data["items"]) == 2
+
+
+def test_list_exercises_filters_by_type(client, teacher_headers):
+    client.post(
+        "/api/v1/assessments/exercises",
+        headers=teacher_headers,
+        json={
+            "type": "MULTIPLE_CHOICE",
+            "title": "MC Only",
+            "mc_question": {
+                "question_text": "Q?",
+                "options": [{"text": "A", "is_correct": True, "order_index": 1}],
+            },
+        },
+    )
+    client.post(
+        "/api/v1/assessments/exercises",
+        headers=teacher_headers,
+        json={
+            "type": "ORDER_SYLLABLES",
+            "title": "OS Only",
+            "os_question": {
+                "question_text": "Ordena",
+                "correct_word": "sol",
+                "syllables_json": ["sol"],
+            },
+        },
+    )
+
+    resp = client.get(
+        "/api/v1/assessments/exercises?type=MULTIPLE_CHOICE",
+        headers=teacher_headers,
+    )
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["total"] == 1
+    assert data["items"][0]["type"] == "MULTIPLE_CHOICE"
+
+
+def test_list_exercises_filters_by_q(client, teacher_headers):
+    client.post(
+        "/api/v1/assessments/exercises",
+        headers=teacher_headers,
+        json={
+            "type": "MULTIPLE_CHOICE",
+            "title": "Encuentra la letra",
+            "mc_question": {
+                "question_text": "Q?",
+                "options": [{"text": "A", "is_correct": True, "order_index": 1}],
+            },
+        },
+    )
+    client.post(
+        "/api/v1/assessments/exercises",
+        headers=teacher_headers,
+        json={
+            "type": "ORDER_SYLLABLES",
+            "title": "Ordena las sílabas",
+            "os_question": {
+                "question_text": "Ordena",
+                "correct_word": "sol",
+                "syllables_json": ["sol"],
+            },
+        },
+    )
+
+    resp = client.get(
+        "/api/v1/assessments/exercises?q=letra",
+        headers=teacher_headers,
+    )
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["total"] == 1
+    assert "letra" in data["items"][0]["title"].lower()
+
+
+def test_get_exercise_by_id_returns_detail(client, teacher_headers):
+    create = client.post(
+        "/api/v1/assessments/exercises",
+        headers=teacher_headers,
+        json={
+            "type": "MULTIPLE_CHOICE",
+            "title": "Detail Test",
+            "instructions": "Pick one",
+            "difficulty_level": 2,
+            "mc_question": {
+                "question_text": "¿Cuál es?",
+                "options": [
+                    {"text": "A", "is_correct": True, "order_index": 1},
+                    {"text": "B", "is_correct": False, "order_index": 2},
+                ],
+            },
+        },
+    )
+    exercise_id = create.json()["exercise_id"]
+
+    resp = client.get(f"/api/v1/assessments/exercises/{exercise_id}", headers=teacher_headers)
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["exercise_id"] == exercise_id
+    assert data["type"] == "MULTIPLE_CHOICE"
+    assert data["title"] == "Detail Test"
+    assert data["instructions"] == "Pick one"
+    assert data["difficulty_level"] == 2
+    assert data["mc_question"] is not None
+    assert data["mc_question"]["question_text"] == "¿Cuál es?"
+    assert len(data["mc_question"]["options"]) == 2
+
+
+def test_get_exercise_by_id_not_found_returns_404(client, teacher_headers):
+    fake_id = "00000000-0000-0000-0000-000000000000"
+    resp = client.get(f"/api/v1/assessments/exercises/{fake_id}", headers=teacher_headers)
+    assert resp.status_code == 404
+
+
+def test_admin_endpoint_shows_correct_answers_mc(client, teacher_headers):
+    create = client.post(
+        "/api/v1/assessments/exercises",
+        headers=teacher_headers,
+        json={
+            "type": "MULTIPLE_CHOICE",
+            "title": "Admin MC",
+            "mc_question": {
+                "question_text": "Test",
+                "options": [
+                    {"text": "Right", "is_correct": True, "order_index": 1},
+                    {"text": "Wrong", "is_correct": False, "order_index": 2},
+                ],
+            },
+        },
+    )
+    exercise_id = create.json()["exercise_id"]
+
+    resp = client.get(f"/api/v1/assessments/exercises/{exercise_id}", headers=teacher_headers)
+    assert resp.status_code == 200
+    data = resp.json()
+    options = data["mc_question"]["options"]
+    right = [o for o in options if o["text"] == "Right"][0]
+    wrong = [o for o in options if o["text"] == "Wrong"][0]
+    assert right["is_correct"] is True
+    assert wrong["is_correct"] is False
+
+
+def test_admin_endpoint_shows_correct_answers_os(client, teacher_headers):
+    create = client.post(
+        "/api/v1/assessments/exercises",
+        headers=teacher_headers,
+        json={
+            "type": "ORDER_SYLLABLES",
+            "title": "Admin OS",
+            "os_question": {
+                "question_text": "Ordena",
+                "correct_word": "casa",
+                "syllables_json": ["ca", "sa"],
+            },
+        },
+    )
+    exercise_id = create.json()["exercise_id"]
+
+    resp = client.get(f"/api/v1/assessments/exercises/{exercise_id}", headers=teacher_headers)
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["os_question"]["correct_word"] == "casa"
+    assert data["os_question"]["syllables_json"] == ["ca", "sa"]
+
+
+def test_admin_endpoint_shows_expected_text_prompt(client, teacher_headers):
+    create = client.post(
+        "/api/v1/assessments/exercises",
+        headers=teacher_headers,
+        json={
+            "type": "READING_SPEAKING",
+            "title": "Admin Prompt",
+            "prompt_exercise": {
+                "text_to_show": "Hola mundo",
+                "language_code": "es-PE",
+                "expected_text": "Hola mundo",
+            },
+        },
+    )
+    exercise_id = create.json()["exercise_id"]
+
+    resp = client.get(f"/api/v1/assessments/exercises/{exercise_id}", headers=teacher_headers)
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["prompt_exercise"]["expected_text"] == "Hola mundo"
+
+
+def test_attempt_endpoint_hides_correct_answers(client, teacher_headers, classroom_id, student_id):
+    """Verify that student/attempt endpoint does NOT expose correct answers."""
+    from sqlalchemy.orm import Session
+
+    tmpl = client.post(
+        "/api/v1/assessments/templates", headers=teacher_headers,
+        json={"name": "HideTest", "version": 1},
+    ).json()
+    template_id = tmpl["template_id"]
+
+    ex = client.post(
+        "/api/v1/assessments/exercises",
+        headers=teacher_headers,
+        json={
+            "type": "MULTIPLE_CHOICE",
+            "title": "MC Hide",
+            "mc_question": {
+                "question_text": "Q?",
+                "options": [
+                    {"text": "A", "is_correct": True, "order_index": 1},
+                    {"text": "B", "is_correct": False, "order_index": 2},
+                ],
+            },
+        },
+    ).json()
+    exercise_id = ex["exercise_id"]
+
+    client.post(
+        f"/api/v1/assessments/templates/{template_id}/exercises",
+        headers=teacher_headers,
+        json={"exercise_id": exercise_id, "order_index": 1},
+    )
+
+    asm = client.post(
+        "/api/v1/assessments",
+        headers=teacher_headers,
+        json={"template_id": template_id, "classroom_id": str(classroom_id)},
+    ).json()
+    assessment_id = asm["assessment_id"]
+
+    att = client.post(
+        f"/api/v1/assessments/{assessment_id}/attempts",
+        headers=teacher_headers,
+        json={"student_id": str(student_id)},
+    ).json()
+    attempt_id = att["attempt_id"]
+
+    detail = client.get(f"/api/v1/assessments/attempts/{attempt_id}", headers=teacher_headers).json()
+    exercise_attempt = detail["exercise_attempts"][0]
+    exercise_data = exercise_attempt["exercise"]
+    mc_q = exercise_data["mc_question"]
+    assert mc_q is not None
+    for opt in mc_q["options"]:
+        assert "is_correct" not in opt, "Student endpoint MUST NOT expose is_correct"
+
+
 def test_get_result_returns_writing_fields(client, teacher_headers, classroom_id, student_id, monkeypatch):
     from app.assessment.infrastructure.adapters.azure_vision_ocr import AzureVisionOcrAdapter
     from app.assessment.application.ports.ocr_service import OcrResult

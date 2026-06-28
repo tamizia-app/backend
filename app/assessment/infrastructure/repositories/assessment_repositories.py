@@ -187,6 +187,29 @@ class SQLAlchemyExerciseRepository(ExerciseRepository):
         )
         return [self._to_domain(m) for m in models]
 
+    def find_all(
+        self,
+        *,
+        type_filter: str | None = None,
+        difficulty_level: int | None = None,
+        q: str | None = None,
+        limit: int = 100,
+        offset: int = 0,
+    ) -> list[AssessmentExercise]:
+        stmt = select(AssessmentExerciseModel).order_by(AssessmentExerciseModel.created_at.desc())
+        if type_filter:
+            stmt = stmt.where(AssessmentExerciseModel.type == type_filter)
+        if difficulty_level is not None:
+            stmt = stmt.where(AssessmentExerciseModel.difficulty_level == difficulty_level)
+        if q:
+            pattern = f"%{q}%"
+            stmt = stmt.where(
+                (AssessmentExerciseModel.title.ilike(pattern))
+                | (AssessmentExerciseModel.instructions.ilike(pattern))
+            )
+        models = self._db.scalars(stmt.offset(offset).limit(limit))
+        return [self._to_domain(m) for m in models]
+
     def create(self, exercise: AssessmentExercise) -> AssessmentExercise:
         model = AssessmentExerciseModel(
             type=exercise.type.value,

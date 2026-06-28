@@ -366,3 +366,61 @@ class PronunciationAssessmentResponse(BaseModel):
     missing_fields: list[str]
     azure_config_used: dict | None = None
     raw_result_json: dict | None = None
+
+
+# ─── Admin / Teacher exercise schemas (include correct answers) ──
+
+
+class AdminMCOptionSchema(BaseModel):
+    option_id: UUID
+    text: str
+    is_correct: bool
+    order_index: int
+
+
+class AdminMCQuestionSchema(BaseModel):
+    mc_question_id: UUID
+    question_text: str
+    image_blob_path: str | None = None
+    image_url: str | None = None
+    options: list[AdminMCOptionSchema] = []
+
+
+class AdminOSQuestionSchema(BaseModel):
+    os_question_id: UUID
+    question_text: str
+    image_blob_path: str | None = None
+    correct_word: str | None = None
+    syllables_json: list[str] = []
+
+
+class AdminPromptExerciseSchema(BaseModel):
+    prompt_exercise_id: UUID
+    prompt_text: str | None = None
+    text_to_show: str | None = None
+    audio_blob_path: str | None = None
+    image_blob_path: str | None = None
+    language_code: str | None = None
+    expected_text: str | None = None
+
+
+class AdminExerciseDetailResponse(BaseModel):
+    exercise_id: UUID
+    type: str
+    title: str
+    instructions: str | None = None
+    stimulus_type: str | None = None
+    response_type: str | None = None
+    difficulty_level: int | None = None
+    is_active: bool
+    created_by_teacher_id: UUID | None = None
+    created_at: datetime
+    updated_at: datetime
+    mc_question: AdminMCQuestionSchema | None = None
+    os_question: AdminOSQuestionSchema | None = None
+    prompt_exercise: AdminPromptExerciseSchema | None = None
+
+
+class AdminExerciseListResponse(BaseModel):
+    items: list[AdminExerciseDetailResponse]
+    total: int

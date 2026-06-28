@@ -28,6 +28,15 @@ class TemplateExerciseRepository(Protocol):
 class ExerciseRepository(Protocol):
     def find_by_id(self, exercise_id: UUID) -> AssessmentExercise | None: ...
     def find_by_ids(self, ids: list[UUID]) -> list[AssessmentExercise]: ...
+    def find_all(
+        self,
+        *,
+        type_filter: str | None = None,
+        difficulty_level: int | None = None,
+        q: str | None = None,
+        limit: int = 100,
+        offset: int = 0,
+    ) -> list[AssessmentExercise]: ...
     def create(self, exercise: AssessmentExercise) -> AssessmentExercise: ...
 
 
