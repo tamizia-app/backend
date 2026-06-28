@@ -72,6 +72,7 @@ class FinishAssessmentAttemptUseCase:
 
         total_score = 0.0
         total_exercises = 0
+        scored_exercises = 0
         evaluated_exercises = 0
         mc_correct = 0
         os_correct = 0
@@ -100,6 +101,7 @@ class FinishAssessmentAttemptUseCase:
                     mc_correct += 1
                 if resp:
                     evaluated_exercises += 1
+                    scored_exercises += 1
 
             elif etype == ExerciseType.ORDER_SYLLABLES:
                 total_exercises += 1
@@ -109,6 +111,7 @@ class FinishAssessmentAttemptUseCase:
                     os_correct += 1
                 if resp:
                     evaluated_exercises += 1
+                    scored_exercises += 1
 
             elif etype in (ExerciseType.READING_SPEAKING, ExerciseType.LISTENING_SPEAKING):
                 total_exercises += 1
@@ -116,6 +119,7 @@ class FinishAssessmentAttemptUseCase:
                 if speaking_resp:
                     speaking_done += 1
                     evaluated_exercises += 1
+                    scored_exercises += 1
                     speaking_score, needs_review, is_failed = self._evaluate_speaking(
                         exercise.id, speaking_resp
                     )
@@ -133,11 +137,16 @@ class FinishAssessmentAttemptUseCase:
                 if resp:
                     writing_done += 1
                     evaluated_exercises += 1
+                    # Writing without OCR does NOT contribute to scored_exercises
+                    # so it does not lower the final_score denominator.
 
-        final_score = (total_score / total_exercises) if total_exercises > 0 else 0.0
+        final_score = (total_score / scored_exercises) if scored_exercises > 0 else None
         speaking_average_score = sum(speaking_scores) / len(speaking_scores) if speaking_scores else None
 
-        level = self._determine_intervention_level(final_score, review_required_count, any_failed)
+        if scored_exercises == 0:
+            level = None
+        else:
+            level = self._determine_intervention_level(final_score or 0.0, review_required_count, any_failed)
 
         now = datetime.now(timezone.utc)
         attempt.status = AttemptStatus.COMPLETED
@@ -148,8 +157,8 @@ class FinishAssessmentAttemptUseCase:
             AssessmentResult(
                 id=UUID(int=0),
                 assessment_attempt_id=attempt.id,
-                final_score=round(final_score, 2),
-                max_score=float(total_exercises * 100),
+                final_score=round(final_score, 2) if final_score is not None else None,
+                max_score=float(scored_exercises * 100) if scored_exercises > 0 else None,
                 mc_correct_count=mc_correct,
                 os_correct_count=os_correct,
                 speaking_completed_count=speaking_done,

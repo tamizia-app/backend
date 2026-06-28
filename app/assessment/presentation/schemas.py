@@ -230,12 +230,37 @@ class SpeakingResponseResponse(BaseModel):
     error_message: str | None = None
 
 
+class WritingMetricsResponse(BaseModel):
+    duration_ms: int | None = None
+    stroke_count: int | None = None
+    point_count: int | None = None
+    average_speed: float | None = None
+    speed_variability: float | None = None
+    pause_count: int | None = None
+    longest_pause_ms: int | None = None
+    total_pause_time_ms: int | None = None
+    pressure_min: float | None = None
+    pressure_max: float | None = None
+    pressure_avg: float | None = None
+    bounding_box: dict | None = None
+    writing_area_usage: float | None = None
+
+
 class WritingResponseResponse(BaseModel):
     response_id: UUID
     exercise_attempt_id: UUID
     image_blob_path: str
     original_filename: str | None
     content_type: str | None
+    recognized_text: str | None = None
+    strokes_json: list | dict | None = None
+    canvas_metadata: dict | None = None
+    input_metadata: dict | None = None
+    frontend_metrics: dict | None = None
+    metrics: WritingMetricsResponse | None = None
+    image_url: str | None = None
+    created_at: datetime | None = None
+    updated_at: datetime | None = None
 
 
 class AssessmentResultResponse(BaseModel):

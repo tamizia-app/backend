@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import uuid
 from collections.abc import Generator
 from datetime import UTC, date, datetime, timezone
@@ -2531,3 +2532,585 @@ def test_get_attempt_detail_returns_mc_image_blob_path_and_url(client, teacher_h
     assert mc_q["image_url"] is not None, "image_url should be generated when image_blob_path exists"
     for opt in mc_q["options"]:
         assert "is_correct" not in opt, "is_correct must NOT be exposed"
+
+
+# ─── Writing Response Tests ─────────────────────────────────────────────
+
+
+SAMPLE_PAYLOAD_JSON = json.dumps({
+    "canvas": {"width": 300, "height": 392, "device_pixel_ratio": 2.625},
+    "input": {"pointer_kind": "touch", "supports_pressure": False},
+    "strokes": [
+        {
+            "stroke_id": 1,
+            "points": [
+                {"x": 10.5, "y": 20.2, "t": 0, "pressure": None},
+                {"x": 11.0, "y": 22.1, "t": 16, "pressure": None},
+            ],
+        },
+        {
+            "stroke_id": 2,
+            "points": [
+                {"x": 50.0, "y": 100.0, "t": 100, "pressure": None},
+            ],
+        },
+    ],
+    "metrics": {
+        "duration_ms": 3500,
+        "stroke_count": 2,
+        "point_count": 3,
+        "pause_count": 1,
+        "longest_pause_ms": 600,
+        "total_pause_time_ms": 600,
+        "average_speed": 0.23,
+        "speed_variability": 0.08,
+        "bounding_box": {"min_x": 10.5, "min_y": 20.2, "max_x": 50.0, "max_y": 100.0},
+        "writing_area_usage": 12.5,
+        "pressure_min": None,
+        "pressure_max": None,
+        "pressure_avg": None,
+    },
+})
+
+
+def _create_writing_setup(client, teacher_headers, classroom_id, student_id, exercise_type="READING_WRITING"):
+    """Helper to create a template with one writing exercise, assessment, and attempt.
+    Returns (attempt_id, exercise_attempt_id)."""
+    tmpl_resp = client.post(
+        "/api/v1/assessments/templates", headers=teacher_headers, json={"name": "TWRITE", "version": 1}
+    )
+    template_id = tmpl_resp.json()["template_id"]
+
+    ex_resp = client.post(
+        "/api/v1/assessments/exercises",
+        headers=teacher_headers,
+        json={
+            "type": exercise_type,
+            "title": "Escritura digital",
+            "instructions": "Copia la frase",
+            "difficulty_level": 1,
+            "prompt_exercise": {
+                "text_to_show": "El gato duerme.",
+                "language_code": "es-PE",
+                "expected_text": "El gato duerme.",
+            },
+        },
+    ).json()
+    exercise_id = ex_resp["exercise_id"]
+
+    client.post(
+        f"/api/v1/assessments/templates/{template_id}/exercises",
+        headers=teacher_headers,
+        json={"exercise_id": exercise_id, "order_index": 1, "points": 10, "is_required": True},
+    )
+
+    asm = client.post(
+        "/api/v1/assessments",
+        headers=teacher_headers,
+        json={"template_id": template_id, "classroom_id": str(classroom_id)},
+    ).json()
+    assessment_id = asm["assessment_id"]
+
+    att = client.post(
+        f"/api/v1/assessments/{assessment_id}/attempts",
+        headers=teacher_headers,
+        json={"student_id": str(student_id)},
+    ).json()
+    attempt_id = att["attempt_id"]
+
+    detail = client.get(f"/api/v1/assessments/attempts/{attempt_id}", headers=teacher_headers).json()
+    ea_id = detail["exercise_attempts"][0]["exercise_attempt_id"]
+    return attempt_id, ea_id
+
+
+# 1. POST writing-response with image + payload_json saves response
+def test_upload_writing_response_creates_response(client, teacher_headers, classroom_id, student_id):
+    _, ea_id = _create_writing_setup(client, teacher_headers, classroom_id, student_id)
+
+    resp = client.post(
+        f"/api/v1/assessments/exercise-attempts/{ea_id}/writing-response",
+        headers=teacher_headers,
+        files={"file": ("writing.png", b"fake-png-content", "image/png")},
+        data={"payload_json": SAMPLE_PAYLOAD_JSON},
+    )
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["response_id"] is not None
+    assert data["exercise_attempt_id"] == str(ea_id)
+    assert data["image_blob_path"] is not None
+    assert data["original_filename"] == "writing.png"
+    assert data["content_type"] == "image/png"
+    assert data["strokes_json"] is not None
+    assert len(data["strokes_json"]) == 2
+    assert data["canvas_metadata"]["width"] == 300
+    assert data["input_metadata"]["pointer_kind"] == "touch"
+    # POST must return metrics inline, not null
+    assert data["metrics"] is not None, "POST writing-response must return metrics"
+    assert data["metrics"]["duration_ms"] == 3500
+    assert data["metrics"]["stroke_count"] == 2
+
+
+# 2. POST writing-response sets ExerciseAttempt.status = ANSWERED
+def test_upload_writing_response_sets_answered(client, teacher_headers, classroom_id, student_id):
+    attempt_id, ea_id = _create_writing_setup(client, teacher_headers, classroom_id, student_id)
+
+    # Before upload, status should be PENDING
+    detail = client.get(f"/api/v1/assessments/attempts/{attempt_id}", headers=teacher_headers).json()
+    assert detail["exercise_attempts"][0]["status"] == "PENDING"
+
+    client.post(
+        f"/api/v1/assessments/exercise-attempts/{ea_id}/writing-response",
+        headers=teacher_headers,
+        files={"file": ("writing.png", b"fake-png-content", "image/png")},
+        data={"payload_json": SAMPLE_PAYLOAD_JSON},
+    )
+
+    # After upload, status should be ANSWERED
+    detail = client.get(f"/api/v1/assessments/attempts/{attempt_id}", headers=teacher_headers).json()
+    assert detail["exercise_attempts"][0]["status"] == "ANSWERED"
+
+
+# 3. POST writing-response sets submitted_at
+def test_upload_writing_response_sets_submitted_at(client, teacher_headers, classroom_id, student_id):
+    _, ea_id = _create_writing_setup(client, teacher_headers, classroom_id, student_id)
+
+    resp = client.post(
+        f"/api/v1/assessments/exercise-attempts/{ea_id}/writing-response",
+        headers=teacher_headers,
+        files={"file": ("writing.png", b"fake-png-content", "image/png")},
+        data={"payload_json": SAMPLE_PAYLOAD_JSON},
+    )
+    assert resp.status_code == 200
+
+    from app.assessment.infrastructure.models.attempt_model import ExerciseAttemptModel
+
+    with TestingSessionLocal() as db:
+        model = db.get(ExerciseAttemptModel, UUID(ea_id))
+        assert model is not None
+        assert model.submitted_at is not None
+
+
+# 4. POST writing-response saves strokes_json
+def test_upload_writing_response_saves_strokes(client, teacher_headers, classroom_id, student_id):
+    _, ea_id = _create_writing_setup(client, teacher_headers, classroom_id, student_id)
+
+    resp = client.post(
+        f"/api/v1/assessments/exercise-attempts/{ea_id}/writing-response",
+        headers=teacher_headers,
+        files={"file": ("writing.png", b"fake-png-content", "image/png")},
+        data={"payload_json": SAMPLE_PAYLOAD_JSON},
+    )
+    data = resp.json()
+    assert len(data["strokes_json"]) == 2
+
+
+# 5. POST writing-response saves Flutter metrics in WritingMetrics
+def test_upload_writing_response_saves_metrics(client, teacher_headers, classroom_id, student_id):
+    _, ea_id = _create_writing_setup(client, teacher_headers, classroom_id, student_id)
+
+    resp = client.post(
+        f"/api/v1/assessments/exercise-attempts/{ea_id}/writing-response",
+        headers=teacher_headers,
+        files={"file": ("writing.png", b"fake-png-content", "image/png")},
+        data={"payload_json": SAMPLE_PAYLOAD_JSON},
+    )
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["metrics"] is not None
+    assert data["metrics"]["duration_ms"] == 3500
+    assert data["metrics"]["stroke_count"] == 2
+    assert data["metrics"]["point_count"] == 3
+    assert data["metrics"]["average_speed"] == 0.23
+    assert data["metrics"]["pause_count"] == 1
+
+
+# 6. GET writing-response returns image, strokes, and metrics
+def test_get_writing_response_returns_data(client, teacher_headers, classroom_id, student_id):
+    _, ea_id = _create_writing_setup(client, teacher_headers, classroom_id, student_id)
+
+    client.post(
+        f"/api/v1/assessments/exercise-attempts/{ea_id}/writing-response",
+        headers=teacher_headers,
+        files={"file": ("writing.png", b"fake-png-content", "image/png")},
+        data={"payload_json": SAMPLE_PAYLOAD_JSON},
+    )
+
+    get_resp = client.get(
+        f"/api/v1/assessments/exercise-attempts/{ea_id}/writing-response",
+        headers=teacher_headers,
+    )
+    assert get_resp.status_code == 200
+    data = get_resp.json()
+    assert data["response_id"] is not None
+    assert data["image_blob_path"] is not None
+    assert data["image_url"] is not None
+    assert data["strokes_json"] is not None
+    assert data["metrics"] is not None
+    assert data["canvas_metadata"]["width"] == 300
+
+
+# 7. GET writing-response without response returns 404
+def test_get_writing_response_not_found(client, teacher_headers, classroom_id, student_id):
+    _, ea_id = _create_writing_setup(client, teacher_headers, classroom_id, student_id)
+
+    get_resp = client.get(
+        f"/api/v1/assessments/exercise-attempts/{ea_id}/writing-response",
+        headers=teacher_headers,
+    )
+    assert get_resp.status_code == 404
+    assert "not found" in get_resp.json()["detail"].lower()
+
+
+# 8. Reattempt writing overwrites previous response
+def test_writing_reattempt_overwrites_previous(client, teacher_headers, classroom_id, student_id):
+    _, ea_id = _create_writing_setup(client, teacher_headers, classroom_id, student_id)
+
+    first_payload = json.dumps({"metrics": {"duration_ms": 1000, "stroke_count": 1}})
+    client.post(
+        f"/api/v1/assessments/exercise-attempts/{ea_id}/writing-response",
+        headers=teacher_headers,
+        files={"file": ("first.png", b"first-image", "image/png")},
+        data={"payload_json": first_payload},
+    )
+
+    second_payload = json.dumps({"metrics": {"duration_ms": 5000, "stroke_count": 5}})
+    client.post(
+        f"/api/v1/assessments/exercise-attempts/{ea_id}/writing-response",
+        headers=teacher_headers,
+        files={"file": ("second.png", b"second-image", "image/png")},
+        data={"payload_json": second_payload},
+    )
+
+    get_resp = client.get(
+        f"/api/v1/assessments/exercise-attempts/{ea_id}/writing-response",
+        headers=teacher_headers,
+    )
+    data = get_resp.json()
+    assert data["original_filename"] == "second.png"
+    assert data["frontend_metrics"]["duration_ms"] == 5000
+    assert data["metrics"]["stroke_count"] == 5
+
+
+# 9. Finish with writing answered does not leave PENDING
+def test_finish_with_writing_answered_not_pending(client, teacher_headers, classroom_id, student_id):
+    attempt_id, ea_id = _create_writing_setup(client, teacher_headers, classroom_id, student_id)
+
+    client.post(
+        f"/api/v1/assessments/exercise-attempts/{ea_id}/writing-response",
+        headers=teacher_headers,
+        files={"file": ("writing.png", b"fake-png-content", "image/png")},
+        data={"payload_json": SAMPLE_PAYLOAD_JSON},
+    )
+
+    finish = client.post(f"/api/v1/assessments/attempts/{attempt_id}/finish", headers=teacher_headers)
+    assert finish.status_code == 200
+    data = finish.json()
+    assert data["writing_completed_count"] == 1
+    assert data["pending_exercises"] == 0
+
+
+# 10. Finish with writing without OCR does not lower final_score of MC/OS/Speaking
+def test_finish_mixed_with_writing_does_not_lower_score(client, teacher_headers, classroom_id, student_id, monkeypatch):
+    from app.assessment.application.use_cases.assess_reading_pipeline import AssessReadingPipelineUseCase
+
+    async def mock_execute(self, command):
+        return {
+            "status": "completed",
+            "recognized_text": "el gato",
+            "stt_recognized_text": "el gato",
+            "assessment_recognized_text": "El gato.",
+            "pronunciation_score": 100.0,
+            "accuracy_score": 100.0,
+            "fluency_score": 100.0,
+            "completeness_score": 100.0,
+            "prosody_score": None,
+            "comparison": None,
+            "review": {},
+            "error_message": None,
+            "duration_ms": 2000,
+            "raw_result_json": {},
+            "stt": {"text": "el gato", "segments": [], "language": "es", "duration_ms": 2000},
+        }
+
+    monkeypatch.setattr(AssessReadingPipelineUseCase, "execute", mock_execute)
+
+    # Create template with MC, OS, Speaking, Writing
+    tmpl_resp = client.post(
+        "/api/v1/assessments/templates", headers=teacher_headers, json={"name": "TMIXW", "version": 1}
+    )
+    template_id = tmpl_resp.json()["template_id"]
+
+    mc_resp = client.post(
+        "/api/v1/assessments/exercises",
+        headers=teacher_headers,
+        json={
+            "type": "MULTIPLE_CHOICE",
+            "title": "MC",
+            "mc_question": {
+                "question_text": "Q?",
+                "options": [{"text": "A", "is_correct": True, "order_index": 1}],
+            },
+        },
+    ).json()
+    os_resp = client.post(
+        "/api/v1/assessments/exercises",
+        headers=teacher_headers,
+        json={
+            "type": "ORDER_SYLLABLES",
+            "title": "OS",
+            "os_question": {
+                "question_text": "Ordena",
+                "correct_word": "sol",
+                "syllables_json": ["sol"],
+            },
+        },
+    ).json()
+    sp_resp = client.post(
+        "/api/v1/assessments/exercises",
+        headers=teacher_headers,
+        json={
+            "type": "READING_SPEAKING",
+            "title": "Speaking",
+            "prompt_exercise": {
+                "text_to_show": "El gato",
+                "language_code": "es-PE",
+                "expected_text": "El gato.",
+            },
+        },
+    ).json()
+    wr_resp = client.post(
+        "/api/v1/assessments/exercises",
+        headers=teacher_headers,
+        json={
+            "type": "READING_WRITING",
+            "title": "Writing",
+            "prompt_exercise": {
+                "text_to_show": "El gato duerme.",
+                "language_code": "es-PE",
+                "expected_text": "El gato duerme.",
+            },
+        },
+    ).json()
+
+    for ex_id, idx in [
+        (mc_resp["exercise_id"], 1),
+        (os_resp["exercise_id"], 2),
+        (sp_resp["exercise_id"], 3),
+        (wr_resp["exercise_id"], 4),
+    ]:
+        client.post(
+            f"/api/v1/assessments/templates/{template_id}/exercises",
+            headers=teacher_headers,
+            json={"exercise_id": ex_id, "order_index": idx, "points": 10, "is_required": True},
+        )
+
+    asm = client.post(
+        "/api/v1/assessments",
+        headers=teacher_headers,
+        json={"template_id": template_id, "classroom_id": str(classroom_id)},
+    ).json()
+    assessment_id = asm["assessment_id"]
+
+    att = client.post(
+        f"/api/v1/assessments/{assessment_id}/attempts",
+        headers=teacher_headers,
+        json={"student_id": str(student_id)},
+    ).json()
+    attempt_id = att["attempt_id"]
+
+    detail = client.get(f"/api/v1/assessments/attempts/{attempt_id}", headers=teacher_headers).json()
+
+    # Submit MC (correct)
+    mc_ea_id = detail["exercise_attempts"][0]["exercise_attempt_id"]
+    with TestingSessionLocal() as db:
+        option = db.query(MCAnswerOptionModel).first()
+        option_id = option.id
+    client.post(
+        f"/api/v1/assessments/exercise-attempts/{mc_ea_id}/mc-response",
+        headers=teacher_headers,
+        json={"selected_option_id": str(option_id)},
+    )
+
+    # Submit OS (correct)
+    os_ea_id = detail["exercise_attempts"][1]["exercise_attempt_id"]
+    client.post(
+        f"/api/v1/assessments/exercise-attempts/{os_ea_id}/os-response",
+        headers=teacher_headers,
+        json={"selected_syllables": ["sol"], "formed_word": "sol"},
+    )
+
+    # Submit Speaking
+    sp_ea_id = detail["exercise_attempts"][2]["exercise_attempt_id"]
+    client.post(
+        f"/api/v1/assessments/exercise-attempts/{sp_ea_id}/speaking-response",
+        headers=teacher_headers,
+        files={"file": ("test.wav", b"fake audio", "audio/wav")},
+    )
+
+    # Submit Writing (without OCR)
+    wr_ea_id = detail["exercise_attempts"][3]["exercise_attempt_id"]
+    client.post(
+        f"/api/v1/assessments/exercise-attempts/{wr_ea_id}/writing-response",
+        headers=teacher_headers,
+        files={"file": ("writing.png", b"fake-png-content", "image/png")},
+        data={"payload_json": SAMPLE_PAYLOAD_JSON},
+    )
+
+    # Finish
+    finish = client.post(f"/api/v1/assessments/attempts/{attempt_id}/finish", headers=teacher_headers)
+    assert finish.status_code == 200
+    data = finish.json()
+    # MC=100, OS=100, Speaking=100 -> avg = 100
+    # Writing should NOT be in denominator
+    assert data["final_score"] == 100.0
+    assert data["writing_completed_count"] == 1
+    assert data["mc_correct_count"] == 1
+    assert data["os_correct_count"] == 1
+    assert data["speaking_completed_count"] == 1
+    assert data["total_exercises"] == 4
+    assert data["evaluated_exercises"] == 4
+    assert data["pending_exercises"] == 0
+
+
+# 11. Upload writing on non-writing exercise returns 400
+def test_upload_writing_wrong_exercise_type_returns_400(client, teacher_headers, classroom_id, student_id):
+    tmpl_resp = client.post(
+        "/api/v1/assessments/templates", headers=teacher_headers, json={"name": "TMC", "version": 1}
+    )
+    template_id = tmpl_resp.json()["template_id"]
+
+    ex_resp = client.post(
+        "/api/v1/assessments/exercises",
+        headers=teacher_headers,
+        json={
+            "type": "MULTIPLE_CHOICE",
+            "title": "MC",
+            "mc_question": {
+                "question_text": "Q?",
+                "options": [{"text": "A", "is_correct": True, "order_index": 1}],
+            },
+        },
+    ).json()
+
+    client.post(
+        f"/api/v1/assessments/templates/{template_id}/exercises",
+        headers=teacher_headers,
+        json={"exercise_id": ex_resp["exercise_id"], "order_index": 1, "points": 10, "is_required": True},
+    )
+
+    asm = client.post(
+        "/api/v1/assessments",
+        headers=teacher_headers,
+        json={"template_id": template_id, "classroom_id": str(classroom_id)},
+    ).json()
+    assessment_id = asm["assessment_id"]
+
+    att = client.post(
+        f"/api/v1/assessments/{assessment_id}/attempts",
+        headers=teacher_headers,
+        json={"student_id": str(student_id)},
+    ).json()
+    attempt_id = att["attempt_id"]
+
+    detail = client.get(f"/api/v1/assessments/attempts/{attempt_id}", headers=teacher_headers).json()
+    ea_id = detail["exercise_attempts"][0]["exercise_attempt_id"]
+
+    resp = client.post(
+        f"/api/v1/assessments/exercise-attempts/{ea_id}/writing-response",
+        headers=teacher_headers,
+        files={"file": ("writing.png", b"fake-png-content", "image/png")},
+        data={"payload_json": SAMPLE_PAYLOAD_JSON},
+    )
+    assert resp.status_code == 400
+    assert "writing" in resp.json()["detail"].lower()
+
+
+# 12. Upload with invalid content type returns 400
+def test_upload_writing_invalid_content_type_returns_400(client, teacher_headers, classroom_id, student_id):
+    _, ea_id = _create_writing_setup(client, teacher_headers, classroom_id, student_id)
+
+    resp = client.post(
+        f"/api/v1/assessments/exercise-attempts/{ea_id}/writing-response",
+        headers=teacher_headers,
+        files={"file": ("writing.gif", b"fake-gif-content", "image/gif")},
+        data={"payload_json": SAMPLE_PAYLOAD_JSON},
+    )
+    assert resp.status_code == 400
+    assert "image format" in resp.json()["detail"].lower()
+
+
+# 13. Upload with invalid payload_json returns 400
+def test_upload_writing_invalid_payload_json_returns_400(client, teacher_headers, classroom_id, student_id):
+    _, ea_id = _create_writing_setup(client, teacher_headers, classroom_id, student_id)
+
+    resp = client.post(
+        f"/api/v1/assessments/exercise-attempts/{ea_id}/writing-response",
+        headers=teacher_headers,
+        files={"file": ("writing.png", b"fake-png-content", "image/png")},
+        data={"payload_json": "not-valid-json"},
+    )
+    assert resp.status_code == 400
+    assert "valid json" in resp.json()["detail"].lower()
+
+
+# 14. Only writing exercises are allowed
+def test_upload_writing_listening_writing_is_accepted(client, teacher_headers, classroom_id, student_id):
+    _, ea_id = _create_writing_setup(client, teacher_headers, classroom_id, student_id, exercise_type="LISTENING_WRITING")
+
+    resp = client.post(
+        f"/api/v1/assessments/exercise-attempts/{ea_id}/writing-response",
+        headers=teacher_headers,
+        files={"file": ("writing.png", b"fake-png-content", "image/png")},
+        data={"payload_json": SAMPLE_PAYLOAD_JSON},
+    )
+    assert resp.status_code == 200
+
+
+# 15. Finish all writing exercises (no scored exercises) returns None score
+def test_finish_all_writing_returns_null_score(client, teacher_headers, classroom_id, student_id):
+    attempt_id, ea_id = _create_writing_setup(client, teacher_headers, classroom_id, student_id)
+
+    client.post(
+        f"/api/v1/assessments/exercise-attempts/{ea_id}/writing-response",
+        headers=teacher_headers,
+        files={"file": ("writing.png", b"fake-png-content", "image/png")},
+        data={"payload_json": SAMPLE_PAYLOAD_JSON},
+    )
+
+    finish = client.post(f"/api/v1/assessments/attempts/{attempt_id}/finish", headers=teacher_headers)
+    assert finish.status_code == 200
+    data = finish.json()
+    assert data["final_score"] is None
+    assert data["max_score"] is None
+    assert data["writing_completed_count"] == 1
+    assert data["total_exercises"] == 1
+    assert data["evaluated_exercises"] == 1
+    assert data["pending_exercises"] == 0
+    assert data["intervention_level"] is None, "intervention_level should be null when no scored exercises"
+
+
+# 16. WebP image is accepted
+def test_upload_writing_webp_accepted(client, teacher_headers, classroom_id, student_id):
+    _, ea_id = _create_writing_setup(client, teacher_headers, classroom_id, student_id)
+
+    resp = client.post(
+        f"/api/v1/assessments/exercise-attempts/{ea_id}/writing-response",
+        headers=teacher_headers,
+        files={"file": ("writing.webp", b"fake-webp-content", "image/webp")},
+        data={"payload_json": SAMPLE_PAYLOAD_JSON},
+    )
+    assert resp.status_code == 200
+
+
+# 17. payload_json without metrics still saves response
+def test_upload_writing_without_metrics_still_succeeds(client, teacher_headers, classroom_id, student_id):
+    _, ea_id = _create_writing_setup(client, teacher_headers, classroom_id, student_id)
+
+    minimal_payload = json.dumps({"strokes": []})
+    resp = client.post(
+        f"/api/v1/assessments/exercise-attempts/{ea_id}/writing-response",
+        headers=teacher_headers,
+        files={"file": ("writing.png", b"fake-png-content", "image/png")},
+        data={"payload_json": minimal_payload},
+    )
+    assert resp.status_code == 200

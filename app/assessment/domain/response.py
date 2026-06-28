@@ -49,3 +49,7 @@ class WritingResponse:
     recognized_text: str | None
     created_at: datetime
     updated_at: datetime
+    strokes_json: dict | None = None
+    canvas_metadata_json: dict | None = None
+    input_metadata_json: dict | None = None
+    frontend_metrics_json: dict | None = None

@@ -144,6 +144,13 @@ class WritingResponseAssembler:
             image_blob_path=r.image_blob_path,
             original_filename=r.original_filename,
             content_type=r.content_type,
+            recognized_text=r.recognized_text,
+            strokes_json=r.strokes_json,
+            canvas_metadata_json=r.canvas_metadata_json,
+            input_metadata_json=r.input_metadata_json,
+            frontend_metrics_json=r.frontend_metrics_json,
+            created_at=r.created_at,
+            updated_at=r.updated_at,
         )
 
 

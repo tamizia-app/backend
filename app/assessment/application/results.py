@@ -129,6 +129,15 @@ class WritingResponseResult:
     image_blob_path: str
     original_filename: str | None
     content_type: str | None
+    recognized_text: str | None = None
+    strokes_json: dict | None = None
+    canvas_metadata_json: dict | None = None
+    input_metadata_json: dict | None = None
+    frontend_metrics_json: dict | None = None
+    metrics: dict | None = None
+    image_url: str | None = None
+    created_at: datetime | None = None
+    updated_at: datetime | None = None
 
 
 @dataclass

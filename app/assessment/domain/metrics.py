@@ -24,13 +24,26 @@ class SpeakingMetrics:
 class WritingMetrics:
     id: UUID
     writing_response_id: UUID
-    confidence_avg: float | None
-    cer: float | None
-    wer: float | None
-    similarity_score: float | None
-    raw_ocr_result_json: dict | None
     created_at: datetime
     updated_at: datetime
+    confidence_avg: float | None = None
+    cer: float | None = None
+    wer: float | None = None
+    similarity_score: float | None = None
+    raw_ocr_result_json: dict | None = None
+    duration_ms: int | None = None
+    stroke_count: int | None = None
+    point_count: int | None = None
+    average_speed: float | None = None
+    speed_variability: float | None = None
+    pause_count: int | None = None
+    longest_pause_ms: int | None = None
+    total_pause_time_ms: int | None = None
+    pressure_min: float | None = None
+    pressure_max: float | None = None
+    pressure_avg: float | None = None
+    bounding_box_json: dict | None = None
+    writing_area_usage: float | None = None
 
 
 @dataclass

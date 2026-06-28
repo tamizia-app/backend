@@ -99,6 +99,10 @@ class WritingResponseModel(UUIDPrimaryKeyMixin, Base):
     original_filename: Mapped[str | None] = mapped_column(String(255), nullable=True)
     content_type: Mapped[str | None] = mapped_column(String(100), nullable=True)
     recognized_text: Mapped[str | None] = mapped_column(String(2000), nullable=True)
+    strokes_json: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+    canvas_metadata_json: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+    input_metadata_json: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+    frontend_metrics_json: Mapped[dict | None] = mapped_column(JSON, nullable=True)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=lambda: datetime.now(UTC), server_default=func.now()
     )

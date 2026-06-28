@@ -758,6 +758,10 @@ class SQLAlchemyWritingResponseRepository(WritingResponseRepository):
             original_filename=r.original_filename,
             content_type=r.content_type,
             recognized_text=r.recognized_text,
+            strokes_json=r.strokes_json,
+            canvas_metadata_json=r.canvas_metadata_json,
+            input_metadata_json=r.input_metadata_json,
+            frontend_metrics_json=r.frontend_metrics_json,
         )
         self._db.add(model)
         self._db.flush()
@@ -770,6 +774,10 @@ class SQLAlchemyWritingResponseRepository(WritingResponseRepository):
             model.original_filename = r.original_filename
             model.content_type = r.content_type
             model.recognized_text = r.recognized_text
+            model.strokes_json = r.strokes_json
+            model.canvas_metadata_json = r.canvas_metadata_json
+            model.input_metadata_json = r.input_metadata_json
+            model.frontend_metrics_json = r.frontend_metrics_json
             self._db.flush()
         return r
 
@@ -782,6 +790,10 @@ class SQLAlchemyWritingResponseRepository(WritingResponseRepository):
             original_filename=model.original_filename,
             content_type=model.content_type,
             recognized_text=model.recognized_text,
+            strokes_json=model.strokes_json,
+            canvas_metadata_json=model.canvas_metadata_json,
+            input_metadata_json=model.input_metadata_json,
+            frontend_metrics_json=model.frontend_metrics_json,
             created_at=model.created_at,
             updated_at=model.updated_at,
         )
@@ -854,9 +866,79 @@ class SQLAlchemyWritingMetricsRepository(WritingMetricsRepository):
             wer=m.wer,
             similarity_score=m.similarity_score,
             raw_ocr_result_json=m.raw_ocr_result_json,
+            duration_ms=m.duration_ms,
+            stroke_count=m.stroke_count,
+            point_count=m.point_count,
+            average_speed=m.average_speed,
+            speed_variability=m.speed_variability,
+            pause_count=m.pause_count,
+            longest_pause_ms=m.longest_pause_ms,
+            total_pause_time_ms=m.total_pause_time_ms,
+            pressure_min=m.pressure_min,
+            pressure_max=m.pressure_max,
+            pressure_avg=m.pressure_avg,
+            bounding_box_json=m.bounding_box_json,
+            writing_area_usage=m.writing_area_usage,
         )
         self._db.add(model)
         self._db.flush()
+        return m
+
+    def find_by_writing_response_id(self, response_id: UUID) -> WritingMetrics | None:
+        model = self._db.scalar(
+            select(WritingMetricsModel).where(
+                WritingMetricsModel.writing_response_id == response_id
+            )
+        )
+        if not model:
+            return None
+        return WritingMetrics(
+            id=model.id,
+            writing_response_id=model.writing_response_id,
+            confidence_avg=model.confidence_avg,
+            cer=model.cer,
+            wer=model.wer,
+            similarity_score=model.similarity_score,
+            raw_ocr_result_json=model.raw_ocr_result_json,
+            duration_ms=model.duration_ms,
+            stroke_count=model.stroke_count,
+            point_count=model.point_count,
+            average_speed=model.average_speed,
+            speed_variability=model.speed_variability,
+            pause_count=model.pause_count,
+            longest_pause_ms=model.longest_pause_ms,
+            total_pause_time_ms=model.total_pause_time_ms,
+            pressure_min=model.pressure_min,
+            pressure_max=model.pressure_max,
+            pressure_avg=model.pressure_avg,
+            bounding_box_json=model.bounding_box_json,
+            writing_area_usage=model.writing_area_usage,
+            created_at=model.created_at,
+            updated_at=model.updated_at,
+        )
+
+    def update(self, m: WritingMetrics) -> WritingMetrics:
+        model = self._db.get(WritingMetricsModel, m.id)
+        if model:
+            model.confidence_avg = m.confidence_avg
+            model.cer = m.cer
+            model.wer = m.wer
+            model.similarity_score = m.similarity_score
+            model.raw_ocr_result_json = m.raw_ocr_result_json
+            model.duration_ms = m.duration_ms
+            model.stroke_count = m.stroke_count
+            model.point_count = m.point_count
+            model.average_speed = m.average_speed
+            model.speed_variability = m.speed_variability
+            model.pause_count = m.pause_count
+            model.longest_pause_ms = m.longest_pause_ms
+            model.total_pause_time_ms = m.total_pause_time_ms
+            model.pressure_min = m.pressure_min
+            model.pressure_max = m.pressure_max
+            model.pressure_avg = m.pressure_avg
+            model.bounding_box_json = m.bounding_box_json
+            model.writing_area_usage = m.writing_area_usage
+            self._db.flush()
         return m
 
 

@@ -89,7 +89,7 @@ class GetAssessmentResultUseCase:
             evaluated_exercises += 1
             etype = exercise.type
 
-            if etype == ExerciseType.READING_SPEAKING or etype == ExerciseType.LISTENING_SPEAKING:
+            if etype in (ExerciseType.READING_SPEAKING, ExerciseType.LISTENING_SPEAKING):
                 speaking_resp = self._speaking_response_repo.find_by_exercise_attempt_id(ea.id)
                 if speaking_resp:
                     score, needs_review, _ = self._evaluate_speaking(exercise.id, speaking_resp)

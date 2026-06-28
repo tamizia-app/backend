@@ -2,6 +2,7 @@ from pathlib import Path
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, Form, HTTPException, UploadFile, status
+import json
 from sqlalchemy.orm import Session
 
 from app.assessment.application.exceptions import AssessmentException
@@ -85,6 +86,7 @@ from app.assessment.infrastructure.repositories.assessment_repositories import (
     SQLAlchemySpeakingResponseRepository,
     SQLAlchemyTemplateExerciseRepository,
     SQLAlchemyTemplateRepository,
+    SQLAlchemyWritingMetricsRepository,
     SQLAlchemyWritingResponseRepository,
 )
 from app.assessment.domain.enums import ExerciseType
@@ -113,6 +115,7 @@ from app.assessment.presentation.schemas import (
     SubmitMCResponseRequest,
     SubmitOSResponseRequest,
     TemplateResponse,
+    WritingMetricsResponse,
     WritingResponseResponse,
 )
 from app.core.config import get_settings
@@ -146,7 +149,7 @@ def _get_teacher_id_or_none(db: Session, user_id: str) -> UUID | None:
 MAX_AUDIO_SIZE = 20 * 1024 * 1024
 MAX_IMAGE_SIZE = 10 * 1024 * 1024
 ALLOWED_AUDIO_TYPES = {"audio/wav", "audio/mpeg", "audio/mp3", "audio/mp4", "audio/x-m4a", "audio/webm", "audio/ogg"}
-ALLOWED_IMAGE_TYPES = {"image/png", "image/jpeg", "image/jpg"}
+ALLOWED_IMAGE_TYPES = {"image/png", "image/jpeg", "image/jpg", "image/webp"}
 
 
 # ─── Template endpoints ───────────────────────────────────────
@@ -919,16 +922,27 @@ def get_speaking_response(
 def upload_writing_response(
     exercise_attempt_id: UUID,
     file: UploadFile,
+    payload_json: str | None = Form(None),
     db: Session = Depends(get_db),
     current_user: UserModel = Depends(get_current_user),
 ) -> WritingResponseResponse:
     _resolve_teacher_id(db, current_user.id)
 
     if file.content_type and file.content_type not in ALLOWED_IMAGE_TYPES:
-        raise HTTPException(status_code=400, detail="Invalid image format. Allowed: png, jpg, jpeg")
+        raise HTTPException(
+            status_code=400,
+            detail="Invalid image format. Allowed: png, jpg, jpeg, webp",
+        )
     content = file.file.read()
     if len(content) > MAX_IMAGE_SIZE:
         raise HTTPException(status_code=400, detail="Image file exceeds 10 MB limit")
+
+    parsed_payload: dict | None = None
+    if payload_json:
+        try:
+            parsed_payload = json.loads(payload_json)
+        except json.JSONDecodeError:
+            raise HTTPException(status_code=400, detail="payload_json must be valid JSON.")
 
     uc = UploadWritingResponseUseCase(
         exercise_attempt_repo=SQLAlchemyExerciseAttemptRepository(db),
@@ -937,6 +951,7 @@ def upload_writing_response(
         assessment_attempt_repo=SQLAlchemyAssessmentAttemptRepository(db),
         assessment_repo=SQLAlchemyAssessmentRepository(db),
         writing_response_repo=SQLAlchemyWritingResponseRepository(db),
+        writing_metrics_repo=SQLAlchemyWritingMetricsRepository(db),
         blob_storage=AzureAssessmentBlobStorage(get_settings()),
     )
     try:
@@ -946,17 +961,122 @@ def upload_writing_response(
                 file_content=content,
                 original_filename=file.filename or "image.png",
                 content_type=file.content_type or "image/png",
+                payload_json=parsed_payload,
             )
         )
     except AssessmentException as e:
         raise HTTPException(status_code=e.status_code, detail=e.detail)
     db.commit()
+
+    image_url = None
+    try:
+        image_url = AzureAssessmentBlobStorage(get_settings()).download_url(
+            blob_path=result.image_blob_path
+        )
+    except Exception:
+        pass
+
+    metrics_response = None
+    try:
+        metrics_repo = SQLAlchemyWritingMetricsRepository(db)
+        metrics = metrics_repo.find_by_writing_response_id(result.response_id)
+        if metrics:
+            metrics_response = WritingMetricsResponse(
+                duration_ms=metrics.duration_ms,
+                stroke_count=metrics.stroke_count,
+                point_count=metrics.point_count,
+                average_speed=metrics.average_speed,
+                speed_variability=metrics.speed_variability,
+                pause_count=metrics.pause_count,
+                longest_pause_ms=metrics.longest_pause_ms,
+                total_pause_time_ms=metrics.total_pause_time_ms,
+                pressure_min=metrics.pressure_min,
+                pressure_max=metrics.pressure_max,
+                pressure_avg=metrics.pressure_avg,
+                bounding_box=metrics.bounding_box_json,
+                writing_area_usage=metrics.writing_area_usage,
+            )
+    except Exception:
+        pass
+
     return WritingResponseResponse(
         response_id=result.response_id,
         exercise_attempt_id=result.exercise_attempt_id,
         image_blob_path=result.image_blob_path,
         original_filename=result.original_filename,
         content_type=result.content_type,
+        recognized_text=result.recognized_text,
+        strokes_json=result.strokes_json,
+        canvas_metadata=result.canvas_metadata_json,
+        input_metadata=result.input_metadata_json,
+        frontend_metrics=result.frontend_metrics_json,
+        metrics=metrics_response,
+        image_url=image_url,
+        created_at=result.created_at,
+        updated_at=result.updated_at,
+    )
+
+
+@router.get(
+    "/exercise-attempts/{exercise_attempt_id}/writing-response",
+    response_model=WritingResponseResponse,
+)
+def get_writing_response(
+    exercise_attempt_id: UUID,
+    db: Session = Depends(get_db),
+    current_user: UserModel = Depends(get_current_user),
+) -> WritingResponseResponse:
+    _resolve_teacher_id(db, current_user.id)
+    writing_repo = SQLAlchemyWritingResponseRepository(db)
+    metrics_repo = SQLAlchemyWritingMetricsRepository(db)
+
+    writing_resp = writing_repo.find_by_exercise_attempt_id(exercise_attempt_id)
+    if not writing_resp:
+        raise HTTPException(status_code=404, detail="Writing response not found")
+
+    metrics = metrics_repo.find_by_writing_response_id(writing_resp.id)
+
+    image_url = None
+    try:
+        image_url = AzureAssessmentBlobStorage(get_settings()).download_url(
+            blob_path=writing_resp.image_blob_path
+        )
+    except Exception:
+        pass
+
+    metrics_response = None
+    if metrics:
+        metrics_response = WritingMetricsResponse(
+            duration_ms=metrics.duration_ms,
+            stroke_count=metrics.stroke_count,
+            point_count=metrics.point_count,
+            average_speed=metrics.average_speed,
+            speed_variability=metrics.speed_variability,
+            pause_count=metrics.pause_count,
+            longest_pause_ms=metrics.longest_pause_ms,
+            total_pause_time_ms=metrics.total_pause_time_ms,
+            pressure_min=metrics.pressure_min,
+            pressure_max=metrics.pressure_max,
+            pressure_avg=metrics.pressure_avg,
+            bounding_box=metrics.bounding_box_json,
+            writing_area_usage=metrics.writing_area_usage,
+        )
+
+    return WritingResponseResponse(
+        response_id=writing_resp.id,
+        exercise_attempt_id=writing_resp.exercise_attempt_id,
+        image_blob_path=writing_resp.image_blob_path,
+        original_filename=writing_resp.original_filename,
+        content_type=writing_resp.content_type,
+        recognized_text=writing_resp.recognized_text,
+        strokes_json=writing_resp.strokes_json,
+        canvas_metadata=writing_resp.canvas_metadata_json,
+        input_metadata=writing_resp.input_metadata_json,
+        frontend_metrics=writing_resp.frontend_metrics_json,
+        metrics=metrics_response,
+        image_url=image_url,
+        created_at=writing_resp.created_at,
+        updated_at=writing_resp.updated_at,
     )
 
 
