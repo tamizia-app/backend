@@ -275,7 +275,7 @@ def _get_or_create_template_exercise(db, te_repo, template_id, exercise_id, orde
     print(f"  TemplateExercise created: template_id={template_id}, exercise_id={exercise_id}")
 
 
-def seed_demo(teacher_id: UUID | None = None, create_assessment: bool = False, classroom_id: UUID | None = None) -> None:
+def seed_demo(teacher_id: UUID | None = None, create_assessment: bool = False, classroom_id: UUID | None = None, mc_image_path: Path | None = None) -> None:
     db = SessionLocal()
     try:
         print("\n=== Seed Assessment Demo ===\n")
@@ -299,6 +299,30 @@ def seed_demo(teacher_id: UUID | None = None, create_assessment: bool = False, c
         mc_ex = _create_mc_exercise(db, teacher_id)
         os_ex = _create_os_exercise(db, teacher_id)
         sp_ex = _create_speaking_exercise(db, teacher_id)
+
+        if mc_image_path:
+            from app.assessment.infrastructure.adapters.assessment_blob_storage import AzureAssessmentBlobStorage
+            from app.assessment.domain.question import MCQuestion
+            from app.core.config import Settings
+            mc_q = mc_q_repo.find_by_exercise_id(mc_ex.id)
+            if mc_q:
+                ext = mc_image_path.suffix or ".png"
+                blob_path = f"assessment-assets/exercises/{mc_ex.id}/mc/question-image{ext}"
+                content = mc_image_path.read_bytes()
+                storage = AzureAssessmentBlobStorage(Settings())
+                storage.upload_asset(content=content, content_type=f"image/{ext.lstrip('.')}", blob_path=blob_path)
+                now = datetime.now(UTC)
+                mc_q_repo.update(
+                    MCQuestion(
+                        id=mc_q.id,
+                        exercise_id=mc_q.exercise_id,
+                        question_text=mc_q.question_text,
+                        image_blob_path=blob_path,
+                        created_at=mc_q.created_at,
+                        updated_at=now,
+                    )
+                )
+                print(f"  MC question image uploaded: {blob_path}")
 
         print(f"\n3. Template-Exercise associations")
         _get_or_create_template_exercise(db, te_repo, template.id, mc_ex.id, order_index=1, points=5, is_required=True)
@@ -363,12 +387,14 @@ def main() -> int:
     parser.add_argument("--teacher-id", type=UUID, help="Teacher UUID (uses first teacher if omitted)")
     parser.add_argument("--create-assessment", action="store_true", help="Also create a demo Assessment")
     parser.add_argument("--classroom-id", type=UUID, help="Classroom UUID (required with --create-assessment if no classroom exists)")
+    parser.add_argument("--mc-image", type=Path, help="Path to a PNG/JPEG/WEBP image for the MC question")
     args = parser.parse_args()
 
     seed_demo(
         teacher_id=args.teacher_id,
         create_assessment=args.create_assessment,
         classroom_id=args.classroom_id,
+        mc_image_path=args.mc_image,
     )
     return 0
 

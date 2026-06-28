@@ -54,6 +54,33 @@ class AzureAssessmentBlobStorage:
         target.write_bytes(content)
         return blob_name
 
+    def upload_asset(
+        self,
+        *,
+        content: bytes,
+        content_type: str,
+        blob_path: str,
+    ) -> str:
+        if self._blob_service_client:
+            container = self._blob_service_client.get_container_client(self._settings.azure_storage_assessment_container_name)
+            try:
+                container.create_container()
+            except Exception:
+                pass
+            blob_client = container.get_blob_client(blob_path)
+            blob_client.upload_blob(
+                content,
+                overwrite=True,
+                content_settings=ContentSettings(content_type=content_type),
+            )
+            return blob_path
+
+        local_root = Path(self._settings.local_storage_path) / "assessments"
+        target = local_root / blob_path
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_bytes(content)
+        return blob_path
+
     def download_url(self, *, blob_path: str) -> str:
         if self._blob_service_client:
             container = self._blob_service_client.get_container_client(self._settings.azure_storage_assessment_container_name)

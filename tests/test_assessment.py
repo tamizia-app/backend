@@ -2378,3 +2378,156 @@ def test_get_os_response_not_found(client, teacher_headers):
         headers=teacher_headers,
     )
     assert resp.status_code == 404
+
+
+def test_upload_mc_question_image(client, teacher_headers):
+    ex_resp = client.post(
+        "/api/v1/assessments/exercises",
+        headers=teacher_headers,
+        json={
+            "type": "MULTIPLE_CHOICE",
+            "title": "MC Img",
+            "mc_question": {
+                "question_text": "¿Qué es?",
+                "options": [{"text": "A", "is_correct": True, "order_index": 1}],
+            },
+        },
+    ).json()
+    exercise_id = ex_resp["exercise_id"]
+
+    response = client.post(
+        f"/api/v1/assessments/exercises/{exercise_id}/mc-question/image",
+        headers=teacher_headers,
+        files={"file": ("test.png", b"fake-png-content", "image/png")},
+    )
+    assert response.status_code == 200
+    data = response.json()
+    assert data["exercise_id"] == exercise_id
+    assert data["mc_question_id"] is not None
+    assert data["image_blob_path"] is not None
+    assert "assessment-assets/exercises/" in data["image_blob_path"]
+    assert data["content_type"] == "image/png"
+    assert data["size_bytes"] == len(b"fake-png-content")
+
+
+def test_upload_mc_question_image_wrong_exercise_type(client, teacher_headers):
+    ex_resp = client.post(
+        "/api/v1/assessments/exercises",
+        headers=teacher_headers,
+        json={
+            "type": "ORDER_SYLLABLES",
+            "title": "OS Img",
+            "os_question": {
+                "question_text": "Ordena",
+                "correct_word": "sol",
+                "syllables_json": ["sol"],
+            },
+        },
+    ).json()
+    exercise_id = ex_resp["exercise_id"]
+
+    response = client.post(
+        f"/api/v1/assessments/exercises/{exercise_id}/mc-question/image",
+        headers=teacher_headers,
+        files={"file": ("test.png", b"fake", "image/png")},
+    )
+    assert response.status_code == 400
+    assert "not MULTIPLE_CHOICE" in response.text
+
+
+def test_upload_mc_question_image_invalid_content_type(client, teacher_headers):
+    ex_resp = client.post(
+        "/api/v1/assessments/exercises",
+        headers=teacher_headers,
+        json={
+            "type": "MULTIPLE_CHOICE",
+            "title": "MC BadType",
+            "mc_question": {
+                "question_text": "Q?",
+                "options": [{"text": "A", "is_correct": True, "order_index": 1}],
+            },
+        },
+    ).json()
+    exercise_id = ex_resp["exercise_id"]
+
+    response = client.post(
+        f"/api/v1/assessments/exercises/{exercise_id}/mc-question/image",
+        headers=teacher_headers,
+        files={"file": ("test.gif", b"fake", "image/gif")},
+    )
+    assert response.status_code == 400
+
+
+def test_upload_mc_question_image_exercise_not_found(client, teacher_headers):
+    fake_id = uuid.uuid4()
+    response = client.post(
+        f"/api/v1/assessments/exercises/{fake_id}/mc-question/image",
+        headers=teacher_headers,
+        files={"file": ("test.png", b"fake", "image/png")},
+    )
+    assert response.status_code == 404
+
+
+def test_get_attempt_detail_returns_mc_image_blob_path_and_url(client, teacher_headers, classroom_id, student_id):
+    ex_resp = client.post(
+        "/api/v1/assessments/exercises",
+        headers=teacher_headers,
+        json={
+            "type": "MULTIPLE_CHOICE",
+            "title": "MC Img Detail",
+            "instructions": "Look at the image",
+            "mc_question": {
+                "question_text": "¿Qué ves?",
+                "options": [
+                    {"text": "Gato", "is_correct": True, "order_index": 1},
+                    {"text": "Perro", "is_correct": False, "order_index": 2},
+                ],
+            },
+        },
+    ).json()
+    exercise_id = ex_resp["exercise_id"]
+
+    tmpl_resp = client.post(
+        "/api/v1/assessments/templates", headers=teacher_headers, json={"name": "TMCIMG", "version": 1}
+    )
+    template_id = tmpl_resp.json()["template_id"]
+
+    client.post(
+        f"/api/v1/assessments/templates/{template_id}/exercises",
+        headers=teacher_headers,
+        json={"exercise_id": exercise_id, "order_index": 1, "points": 10, "is_required": True},
+    )
+
+    asm = client.post(
+        "/api/v1/assessments", headers=teacher_headers,
+        json={"template_id": template_id, "classroom_id": str(classroom_id)},
+    ).json()
+
+    att = client.post(
+        f"/api/v1/assessments/{asm['assessment_id']}/attempts", headers=teacher_headers,
+        json={"student_id": str(student_id)},
+    ).json()
+
+    # Upload image to MC question
+    client.post(
+        f"/api/v1/assessments/exercises/{exercise_id}/mc-question/image",
+        headers=teacher_headers,
+        files={"file": ("test.png", b"fake-png-content", "image/png")},
+    )
+
+    detail = client.get(
+        f"/api/v1/assessments/attempts/{att['attempt_id']}", headers=teacher_headers,
+    )
+    assert detail.status_code == 200
+    items = detail.json()["exercise_attempts"]
+    assert len(items) == 1
+    ex = items[0]["exercise"]
+    assert ex["type"] == "MULTIPLE_CHOICE"
+    mc_q = ex["mc_question"]
+    assert mc_q["question_text"] == "¿Qué ves?"
+    assert mc_q["image_blob_path"] is not None
+    assert "assessment-assets/exercises/" in mc_q["image_blob_path"]
+    # image_url should be generated (non-null) because blob_path exists
+    assert mc_q["image_url"] is not None, "image_url should be generated when image_blob_path exists"
+    for opt in mc_q["options"]:
+        assert "is_correct" not in opt, "is_correct must NOT be exposed"

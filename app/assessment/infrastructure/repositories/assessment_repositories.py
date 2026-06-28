@@ -303,6 +303,14 @@ class SQLAlchemyMCQuestionRepository(MCQuestionRepository):
         self._db.flush()
         return self._to_domain(model)
 
+    def update(self, q: MCQuestion) -> MCQuestion:
+        model = self._db.get(MCQuestionModel, q.id)
+        if model:
+            model.question_text = q.question_text
+            model.image_blob_path = q.image_blob_path
+            self._db.flush()
+        return q
+
     @staticmethod
     def _to_domain(model: MCQuestionModel) -> MCQuestion:
         return MCQuestion(

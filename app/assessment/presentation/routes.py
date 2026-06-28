@@ -1,3 +1,4 @@
+from pathlib import Path
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, Form, HTTPException, UploadFile, status
@@ -87,6 +88,7 @@ from app.assessment.infrastructure.repositories.assessment_repositories import (
     SQLAlchemyWritingResponseRepository,
 )
 from app.assessment.domain.enums import ExerciseType
+from app.assessment.domain.question import MCQuestion
 from app.assessment.domain.metrics import AssessmentResult as AssessmentResultDomain
 from app.assessment.presentation.schemas import (
     AssessmentResponse,
@@ -102,6 +104,7 @@ from app.assessment.presentation.schemas import (
     DownloadUrlResponse,
     ExerciseAttemptItem,
     ExerciseResponse,
+    MCQuestionImageUploadResponse,
     MCResponseResponse,
     OSResponseResponse,
     PronunciationAssessmentResponse,
@@ -300,6 +303,73 @@ def get_exercise(
         created_by_teacher_id=exercise.created_by_teacher_id,
         created_at=exercise.created_at,
         updated_at=exercise.updated_at,
+    )
+
+
+ALLOWED_MC_IMAGE_TYPES = {"image/png", "image/jpeg", "image/jpg", "image/webp"}
+MAX_MC_IMAGE_SIZE = 5 * 1024 * 1024
+
+
+@router.post(
+    "/exercises/{exercise_id}/mc-question/image",
+    response_model=MCQuestionImageUploadResponse,
+    status_code=status.HTTP_200_OK,
+)
+def upload_mc_question_image(
+    exercise_id: UUID,
+    file: UploadFile,
+    db: Session = Depends(get_db),
+    current_user: UserModel = Depends(get_current_user),
+) -> MCQuestionImageUploadResponse:
+    teacher_id = _resolve_teacher_id(db, current_user.id)
+
+    ex_repo = SQLAlchemyExerciseRepository(db)
+    exercise = ex_repo.find_by_id(exercise_id)
+    if not exercise:
+        raise HTTPException(status_code=404, detail="Exercise not found")
+    if exercise.type != ExerciseType.MULTIPLE_CHOICE:
+        raise HTTPException(status_code=400, detail="Exercise is not MULTIPLE_CHOICE")
+
+    mc_q_repo = SQLAlchemyMCQuestionRepository(db)
+    mc_q = mc_q_repo.find_by_exercise_id(exercise_id)
+    if not mc_q:
+        raise HTTPException(status_code=404, detail="MC question not found for this exercise")
+
+    if file.content_type not in ALLOWED_MC_IMAGE_TYPES:
+        raise HTTPException(
+            status_code=400,
+            detail="Invalid image format. Allowed: png, jpg, jpeg, webp",
+        )
+    content = file.file.read()
+    if len(content) > MAX_MC_IMAGE_SIZE:
+        raise HTTPException(status_code=400, detail="Image file exceeds 5 MB limit")
+
+    ext = Path(file.filename or "image.png").suffix or ".png"
+    blob_path = f"assessment-assets/exercises/{exercise_id}/mc/question-image{ext}"
+
+    storage = AzureAssessmentBlobStorage(get_settings())
+    storage.upload_asset(content=content, content_type=file.content_type, blob_path=blob_path)
+
+    from datetime import UTC, datetime, timezone
+    now = datetime.now(timezone.utc)
+    updated = mc_q_repo.update(
+        MCQuestion(
+            id=mc_q.id,
+            exercise_id=mc_q.exercise_id,
+            question_text=mc_q.question_text,
+            image_blob_path=blob_path,
+            created_at=mc_q.created_at,
+            updated_at=now,
+        )
+    )
+
+    db.commit()
+    return MCQuestionImageUploadResponse(
+        exercise_id=exercise_id,
+        mc_question_id=updated.id,
+        image_blob_path=blob_path,
+        content_type=file.content_type,
+        size_bytes=len(content),
     )
 
 
@@ -571,9 +641,17 @@ def get_attempt(
                     mc_q = mc_q_repo.find_by_exercise_id(exercise.id)
                     if mc_q:
                         options = mc_opt_repo.find_by_question_id(mc_q.id)
+                        image_url = None
+                        if mc_q.image_blob_path:
+                            try:
+                                storage = AzureAssessmentBlobStorage(get_settings())
+                                image_url = storage.download_url(blob_path=mc_q.image_blob_path)
+                            except Exception:
+                                pass
                         mc_question = MCQuestionSchema(
                             question_text=mc_q.question_text,
                             image_blob_path=mc_q.image_blob_path,
+                            image_url=image_url,
                             options=[
                                 MCOptionSchema(
                                     option_id=opt.id,

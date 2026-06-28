@@ -124,6 +124,7 @@ class MCOptionSchema(BaseModel):
 class MCQuestionSchema(BaseModel):
     question_text: str
     image_blob_path: str | None = None
+    image_url: str | None = None
     options: list[MCOptionSchema] = []
 
 
@@ -268,6 +269,14 @@ class AttemptListItem(BaseModel):
 class AttemptListResponse(BaseModel):
     items: list[AttemptListItem]
     total: int
+
+
+class MCQuestionImageUploadResponse(BaseModel):
+    exercise_id: UUID
+    mc_question_id: UUID
+    image_blob_path: str | None
+    content_type: str
+    size_bytes: int
 
 
 class DownloadUrlResponse(BaseModel):
