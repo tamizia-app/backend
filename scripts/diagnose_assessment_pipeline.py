@@ -50,7 +50,7 @@ def parse_args() -> argparse.Namespace:
 async def run(args: argparse.Namespace) -> dict:
     if not args.audio.is_file():
         raise ValueError(f"Audio file not found: {args.audio}")
-    config = WhisperConfig.from_environment()
+    config = WhisperConfig.from_settings(Settings())
     if args.whisper_model:
         config = replace(config, model_size=args.whisper_model)
     use_case = AssessReadingPipelineUseCase(

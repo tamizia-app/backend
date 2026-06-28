@@ -167,6 +167,18 @@ class SpeakingResponseResponse(BaseModel):
     original_filename: str | None
     content_type: str | None
     duration_ms: int | None
+    free_transcription_text: str | None = None
+    assessment_recognized_text: str | None = None
+    recognized_text: str | None = None
+    pronunciation_score: float | None = None
+    accuracy_score: float | None = None
+    fluency_score: float | None = None
+    completeness_score: float | None = None
+    prosody_score: float | None = None
+    evaluation_status: str = "completed"
+    comparison: dict | None = None
+    review: dict | None = None
+    error_message: str | None = None
 
 
 class WritingResponseResponse(BaseModel):
@@ -187,6 +199,11 @@ class AssessmentResultResponse(BaseModel):
     writing_completed_count: int | None
     intervention_level: str | None
     generated_at: datetime | None
+    speaking_average_score: float | None = None
+    speaking_review_required_count: int = 0
+    total_exercises: int = 0
+    evaluated_exercises: int = 0
+    pending_exercises: int = 0
 
 
 class DownloadUrlResponse(BaseModel):

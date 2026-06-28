@@ -48,6 +48,17 @@ class Settings(BaseSettings):
     azure_blob_sas_expiration_minutes: int = 5
     azure_blob_template_folder: str = "general_consent"
 
+    assessment_stt_provider: str = "faster_whisper"
+    whisper_model_size: str = "base"
+    whisper_device: str = "cpu"
+    whisper_compute_type: str = "int8"
+    whisper_language: str = "es"
+    whisper_beam_size: int = 5
+    whisper_word_timestamps: bool = True
+    whisper_vad_filter: bool = False
+    whisper_model_download_root: str | None = None
+    whisper_low_confidence_threshold: float = -1.0
+
 
 @lru_cache
 def get_settings() -> Settings:

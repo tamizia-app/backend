@@ -1,13 +1,10 @@
 from __future__ import annotations
 
 import asyncio
-import os
 import threading
 import time
 from dataclasses import dataclass
 from typing import Any, Callable
-
-from dotenv import dotenv_values
 
 from app.assessment.application.exceptions_speech_to_text import (
     WhisperDeviceError,
@@ -24,18 +21,10 @@ from app.assessment.application.ports.speech_to_text import (
 )
 
 
-def _environment_value(name: str, default: str) -> str:
-    return os.getenv(name) or str(dotenv_values(".env").get(name) or default)
-
-
-def _as_bool(value: str) -> bool:
-    return value.strip().lower() in {"1", "true", "yes", "on"}
-
-
 @dataclass(frozen=True)
 class WhisperConfig:
     provider: str = "faster_whisper"
-    model_size: str = "small"
+    model_size: str = "base"
     device: str = "cpu"
     compute_type: str = "int8"
     language: str = "es"
@@ -46,23 +35,18 @@ class WhisperConfig:
     low_confidence_threshold: float = -1.0
 
     @classmethod
-    def from_environment(cls) -> "WhisperConfig":
-        download_root = _environment_value("WHISPER_MODEL_DOWNLOAD_ROOT", "").strip() or None
+    def from_settings(cls, settings: Any) -> "WhisperConfig":
         config = cls(
-            provider=_environment_value("ASSESSMENT_STT_PROVIDER", "faster_whisper"),
-            model_size=_environment_value("WHISPER_MODEL_SIZE", "small"),
-            device=_environment_value("WHISPER_DEVICE", "cpu"),
-            compute_type=_environment_value("WHISPER_COMPUTE_TYPE", "int8"),
-            language=_environment_value("WHISPER_LANGUAGE", "es"),
-            beam_size=int(_environment_value("WHISPER_BEAM_SIZE", "5")),
-            word_timestamps=_as_bool(
-                _environment_value("WHISPER_WORD_TIMESTAMPS", "true")
-            ),
-            vad_filter=_as_bool(_environment_value("WHISPER_VAD_FILTER", "false")),
-            download_root=download_root,
-            low_confidence_threshold=float(
-                _environment_value("WHISPER_LOW_CONFIDENCE_THRESHOLD", "-1.0")
-            ),
+            provider=settings.assessment_stt_provider,
+            model_size=settings.whisper_model_size,
+            device=settings.whisper_device,
+            compute_type=settings.whisper_compute_type,
+            language=settings.whisper_language,
+            beam_size=settings.whisper_beam_size,
+            word_timestamps=settings.whisper_word_timestamps,
+            vad_filter=settings.whisper_vad_filter,
+            download_root=settings.whisper_model_download_root,
+            low_confidence_threshold=settings.whisper_low_confidence_threshold,
         )
         if config.provider != "faster_whisper":
             raise ValueError(f"Unsupported assessment STT provider: {config.provider}")

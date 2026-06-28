@@ -72,6 +72,8 @@ class SpeakingResponseModel(UUIDPrimaryKeyMixin, Base):
     content_type: Mapped[str | None] = mapped_column(String(100), nullable=True)
     duration_ms: Mapped[int | None] = mapped_column(Integer, nullable=True)
     recognized_text: Mapped[str | None] = mapped_column(String(2000), nullable=True)
+    free_transcription_text: Mapped[str | None] = mapped_column(String(2000), nullable=True)
+    assessment_recognized_text: Mapped[str | None] = mapped_column(String(2000), nullable=True)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=lambda: datetime.now(UTC), server_default=func.now()
     )

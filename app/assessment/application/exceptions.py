@@ -73,3 +73,9 @@ class StorageError(AssessmentException):
     def __init__(self, detail: str = "File storage operation failed.") -> None:
         self.status_code = 500
         self.detail = detail
+
+
+class ExpectedTextNotFoundError(AssessmentException):
+    def __init__(self, detail: str = "Expected text not found for this exercise.") -> None:
+        self.status_code = 400
+        self.detail = detail

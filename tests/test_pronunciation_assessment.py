@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import shutil
 import uuid
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -17,6 +18,9 @@ from app.assessment.infrastructure.audio_processing import prepare_audio
 from app.core.config import Settings
 from app.dependencies.auth import get_current_user
 from app.main import app
+
+
+_has_ffmpeg = shutil.which("ffmpeg") is not None
 
 
 @pytest.mark.parametrize(
@@ -200,9 +204,9 @@ def test_cancellation_has_explicit_status():
     assert parsed.error_code == "invalid_credentials"
 
 
-def test_locale_is_configurable_and_defaults_to_es_mx(monkeypatch):
+def test_locale_defaults_to_es_pe(monkeypatch):
     monkeypatch.delenv("AZURE_SPEECH_ASSESSMENT_LOCALE", raising=False)
-    assert get_assessment_locale() == "es-MX"
+    assert get_assessment_locale() == "es-PE"
     monkeypatch.setenv("AZURE_SPEECH_ASSESSMENT_LOCALE", "es-ES")
     assert get_assessment_locale() == "es-ES"
     assert get_assessment_locale("es-MX") == "es-MX"
@@ -213,6 +217,7 @@ def test_empty_reference_is_rejected_before_azure():
     assert result.error_code == "empty_reference_text"
 
 
+@pytest.mark.skipif(not _has_ffmpeg, reason="ffmpeg not installed — required to normalize stereo audio")
 def test_audio_inspection_for_compliant_and_stereo_files():
     for filename, normalized in (("audios/elgato.wav", False), ("audios/laperra.wav", True)):
         content = open(filename, "rb").read()

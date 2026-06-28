@@ -694,6 +694,8 @@ class SQLAlchemySpeakingResponseRepository(SpeakingResponseRepository):
             content_type=r.content_type,
             duration_ms=r.duration_ms,
             recognized_text=r.recognized_text,
+            free_transcription_text=r.free_transcription_text,
+            assessment_recognized_text=r.assessment_recognized_text,
         )
         self._db.add(model)
         self._db.flush()
@@ -707,6 +709,8 @@ class SQLAlchemySpeakingResponseRepository(SpeakingResponseRepository):
             model.content_type = r.content_type
             model.duration_ms = r.duration_ms
             model.recognized_text = r.recognized_text
+            model.free_transcription_text = r.free_transcription_text
+            model.assessment_recognized_text = r.assessment_recognized_text
             self._db.flush()
         return r
 
@@ -720,6 +724,8 @@ class SQLAlchemySpeakingResponseRepository(SpeakingResponseRepository):
             content_type=model.content_type,
             duration_ms=model.duration_ms,
             recognized_text=model.recognized_text,
+            free_transcription_text=model.free_transcription_text,
+            assessment_recognized_text=model.assessment_recognized_text,
             created_at=model.created_at,
             updated_at=model.updated_at,
         )
@@ -786,9 +792,45 @@ class SQLAlchemySpeakingMetricsRepository(SpeakingMetricsRepository):
             completeness_score=m.completeness_score,
             prosody_score=m.prosody_score,
             raw_speech_result_json=m.raw_speech_result_json,
+            raw_transcription_result_json=m.raw_transcription_result_json,
         )
         self._db.add(model)
         self._db.flush()
+        return m
+
+    def find_by_speaking_response_id(self, response_id: UUID) -> SpeakingMetrics | None:
+        model = self._db.scalar(
+            select(SpeakingMetricsModel).where(
+                SpeakingMetricsModel.speaking_response_id == response_id
+            )
+        )
+        if not model:
+            return None
+        return SpeakingMetrics(
+            id=model.id,
+            speaking_response_id=model.speaking_response_id,
+            pronunciation_score=model.pronunciation_score,
+            accuracy_score=model.accuracy_score,
+            fluency_score=model.fluency_score,
+            completeness_score=model.completeness_score,
+            prosody_score=model.prosody_score,
+            raw_speech_result_json=model.raw_speech_result_json,
+            raw_transcription_result_json=model.raw_transcription_result_json,
+            created_at=model.created_at,
+            updated_at=model.updated_at,
+        )
+
+    def update(self, m: SpeakingMetrics) -> SpeakingMetrics:
+        model = self._db.get(SpeakingMetricsModel, m.id)
+        if model:
+            model.pronunciation_score = m.pronunciation_score
+            model.accuracy_score = m.accuracy_score
+            model.fluency_score = m.fluency_score
+            model.completeness_score = m.completeness_score
+            model.prosody_score = m.prosody_score
+            model.raw_speech_result_json = m.raw_speech_result_json
+            model.raw_transcription_result_json = m.raw_transcription_result_json
+            self._db.flush()
         return m
 
 

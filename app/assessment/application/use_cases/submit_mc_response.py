@@ -80,5 +80,7 @@ class SubmitMCResponseUseCase:
                 )
             )
 
+        ea.status = ExerciseAttemptStatus.ANSWERED
+        ea.submitted_at = now
         self._exercise_attempt_repo.update(ea)
         return MCResponseAssembler.to_result(response)

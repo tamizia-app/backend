@@ -128,6 +128,9 @@ class SpeakingResponseAssembler:
             original_filename=r.original_filename,
             content_type=r.content_type,
             duration_ms=r.duration_ms,
+            free_transcription_text=r.free_transcription_text,
+            assessment_recognized_text=r.assessment_recognized_text,
+            recognized_text=r.recognized_text,
         )
 
 
@@ -156,4 +159,9 @@ class FinalResultAssembler:
             writing_completed_count=r.writing_completed_count,
             intervention_level=r.intervention_level,
             generated_at=r.generated_at,
+            speaking_average_score=r.speaking_average_score,
+            speaking_review_required_count=r.speaking_review_required_count,
+            total_exercises=r.total_exercises,
+            evaluated_exercises=r.evaluated_exercises,
+            pending_exercises=r.pending_exercises,
         )

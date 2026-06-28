@@ -1,24 +1,30 @@
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from uuid import UUID
 
 from app.assessment.application.exceptions import (
     AttemptAlreadyCompletedError,
     AttemptNotFoundError,
+    ExerciseAttemptNotFoundError,
 )
 from app.assessment.application.ports.repositories import (
     AssessmentAttemptRepository,
     AssessmentResultRepository,
     ExerciseAttemptRepository,
     ExerciseRepository,
+    ExpectedAnswerRepository,
     MCResponseRepository,
     OSResponseRepository,
+    PromptExerciseRepository,
+    SpeakingMetricsRepository,
     SpeakingResponseRepository,
     TemplateExerciseRepository,
     WritingResponseRepository,
 )
-from app.assessment.domain.enums import AttemptStatus, InterventionLevel
+from app.assessment.domain.enums import AttemptStatus, ExerciseAttemptStatus, ExerciseType, InterventionLevel
 from app.assessment.domain.metrics import AssessmentResult
+from app.assessment.domain.response import SpeakingResponse
+from app.assessment.domain.text_comparison import compare_texts
 
 
 @dataclass
@@ -37,6 +43,9 @@ class FinishAssessmentAttemptUseCase:
         os_response_repo: OSResponseRepository,
         speaking_response_repo: SpeakingResponseRepository,
         writing_response_repo: WritingResponseRepository,
+        speaking_metrics_repo: SpeakingMetricsRepository,
+        prompt_exercise_repo: PromptExerciseRepository,
+        expected_answer_repo: ExpectedAnswerRepository,
         result_repo: AssessmentResultRepository,
     ) -> None:
         self._attempt_repo = attempt_repo
@@ -47,6 +56,9 @@ class FinishAssessmentAttemptUseCase:
         self._os_response_repo = os_response_repo
         self._speaking_response_repo = speaking_response_repo
         self._writing_response_repo = writing_response_repo
+        self._speaking_metrics_repo = speaking_metrics_repo
+        self._prompt_exercise_repo = prompt_exercise_repo
+        self._expected_answer_repo = expected_answer_repo
         self._result_repo = result_repo
 
     def execute(self, command: FinishAssessmentAttemptCommand) -> AssessmentResult:
@@ -58,53 +70,74 @@ class FinishAssessmentAttemptUseCase:
 
         exercise_attempts = self._exercise_attempt_repo.find_by_assessment_attempt_id(attempt.id)
 
+        total_score = 0.0
+        total_exercises = 0
+        evaluated_exercises = 0
         mc_correct = 0
         os_correct = 0
         speaking_done = 0
         writing_done = 0
-        mc_total = 0
-        os_total = 0
-        speaking_total = 0
-        writing_total = 0
+        review_required_count = 0
+        any_failed = False
+        speaking_scores: list[float] = []
 
         for ea in exercise_attempts:
             te = self._template_exercise_repo.find_by_id(ea.template_exercise_id)
             exercise = self._exercise_repo.find_by_id(te.exercise_id)
+
+            if te.is_required and ea.status == ExerciseAttemptStatus.PENDING:
+                raise ExerciseAttemptNotFoundError(
+                    f"Exercise attempt {ea.id} is still PENDING. Complete all required exercises before finishing."
+                )
+
             etype = exercise.type
 
-            if etype.value == "MULTIPLE_CHOICE":
-                mc_total += 1
+            if etype == ExerciseType.MULTIPLE_CHOICE:
+                total_exercises += 1
                 resp = self._mc_response_repo.find_by_exercise_attempt_id(ea.id)
                 if resp and resp.is_correct:
+                    total_score += 100.0
                     mc_correct += 1
-            elif etype.value == "ORDER_SYLLABLES":
-                os_total += 1
+                if resp:
+                    evaluated_exercises += 1
+
+            elif etype == ExerciseType.ORDER_SYLLABLES:
+                total_exercises += 1
                 resp = self._os_response_repo.find_by_exercise_attempt_id(ea.id)
                 if resp and resp.is_correct:
+                    total_score += 100.0
                     os_correct += 1
-            elif etype.value in ("READING_SPEAKING", "LISTENING_SPEAKING"):
-                speaking_total += 1
-                resp = self._speaking_response_repo.find_by_exercise_attempt_id(ea.id)
                 if resp:
+                    evaluated_exercises += 1
+
+            elif etype in (ExerciseType.READING_SPEAKING, ExerciseType.LISTENING_SPEAKING):
+                total_exercises += 1
+                speaking_resp = self._speaking_response_repo.find_by_exercise_attempt_id(ea.id)
+                if speaking_resp:
                     speaking_done += 1
-            elif etype.value in ("READING_WRITING", "LISTENING_WRITING"):
-                writing_total += 1
+                    evaluated_exercises += 1
+                    speaking_score, needs_review, is_failed = self._evaluate_speaking(
+                        exercise.id, speaking_resp
+                    )
+                    if speaking_score is not None:
+                        total_score += speaking_score
+                        speaking_scores.append(speaking_score)
+                    if needs_review:
+                        review_required_count += 1
+                    if is_failed:
+                        any_failed = True
+
+            elif etype in (ExerciseType.READING_WRITING, ExerciseType.LISTENING_WRITING):
+                total_exercises += 1
                 resp = self._writing_response_repo.find_by_exercise_attempt_id(ea.id)
                 if resp:
                     writing_done += 1
+                    evaluated_exercises += 1
 
-        max_score = (mc_total + os_total) * 10
-        raw_score = (mc_correct + os_correct) * 10
-        raw_score_with_speaking = raw_score + (speaking_done * 5) + (writing_done * 5)
-        max_score_with_all = max_score + (speaking_total * 5) + (writing_total * 5)
-        final_score = (raw_score_with_speaking / max_score_with_all * 100) if max_score_with_all > 0 else 0
+        final_score = (total_score / total_exercises) if total_exercises > 0 else 0.0
+        speaking_average_score = sum(speaking_scores) / len(speaking_scores) if speaking_scores else None
 
-        if final_score >= 80:
-            level = InterventionLevel.LOW
-        elif final_score >= 50:
-            level = InterventionLevel.MEDIUM
-        else:
-            level = InterventionLevel.HIGH
+        level = self._determine_intervention_level(final_score, review_required_count, any_failed)
 
         now = datetime.now(timezone.utc)
         attempt.status = AttemptStatus.COMPLETED
@@ -116,7 +149,7 @@ class FinishAssessmentAttemptUseCase:
                 id=UUID(int=0),
                 assessment_attempt_id=attempt.id,
                 final_score=round(final_score, 2),
-                max_score=float(max_score_with_all),
+                max_score=float(total_exercises * 100),
                 mc_correct_count=mc_correct,
                 os_correct_count=os_correct,
                 speaking_completed_count=speaking_done,
@@ -127,4 +160,71 @@ class FinishAssessmentAttemptUseCase:
                 updated_at=now,
             )
         )
+        result.speaking_average_score = speaking_average_score
+        result.speaking_review_required_count = review_required_count
+        result.total_exercises = total_exercises
+        result.evaluated_exercises = evaluated_exercises
+        result.pending_exercises = total_exercises - evaluated_exercises
         return result
+
+    def _evaluate_speaking(
+        self, exercise_id: UUID, speaking_resp: SpeakingResponse
+    ) -> tuple[float | None, bool, bool]:
+        metrics = self._speaking_metrics_repo.find_by_speaking_response_id(speaking_resp.id)
+        if metrics is None:
+            return (None, True, True)
+
+        all_scores_none = all(
+            x is None
+            for x in (
+                metrics.pronunciation_score,
+                metrics.accuracy_score,
+                metrics.completeness_score,
+            )
+        )
+        is_failed = all_scores_none and not speaking_resp.free_transcription_text
+
+        components: list[float] = []
+        if metrics.pronunciation_score is not None:
+            components.append(metrics.pronunciation_score)
+        if metrics.accuracy_score is not None:
+            components.append(metrics.accuracy_score)
+        if metrics.completeness_score is not None:
+            components.append(metrics.completeness_score)
+
+        lexical_match: float | None = None
+        prompt_exercise = self._prompt_exercise_repo.find_by_exercise_id(exercise_id)
+        if prompt_exercise:
+            expected_answer = self._expected_answer_repo.find_by_prompt_exercise_id(prompt_exercise.id)
+            if expected_answer and speaking_resp.free_transcription_text:
+                comparison = compare_texts(expected_answer.expected_text, speaking_resp.free_transcription_text)
+                lexical_match = comparison.lexical_match_percentage
+                if lexical_match is not None:
+                    components.append(lexical_match)
+
+        speaking_score = sum(components) / len(components) if components else None
+
+        needs_review = False
+        if is_failed:
+            needs_review = True
+        elif speaking_score is not None and speaking_score < 70:
+            needs_review = True
+        elif lexical_match is not None and lexical_match < 70:
+            needs_review = True
+
+        return (speaking_score, needs_review, is_failed)
+
+    @staticmethod
+    def _determine_intervention_level(
+        final_score: float, review_required_count: int, any_failed: bool
+    ) -> InterventionLevel:
+        if any_failed:
+            return InterventionLevel.HIGH
+        if final_score >= 80:
+            if review_required_count > 0:
+                return InterventionLevel.MEDIUM
+            return InterventionLevel.LOW
+        elif final_score >= 50:
+            return InterventionLevel.MEDIUM
+        else:
+            return InterventionLevel.HIGH

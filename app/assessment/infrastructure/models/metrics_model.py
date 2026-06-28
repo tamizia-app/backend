@@ -25,6 +25,7 @@ class SpeakingMetricsModel(UUIDPrimaryKeyMixin, Base):
     completeness_score: Mapped[float | None] = mapped_column(Float, nullable=True)
     prosody_score: Mapped[float | None] = mapped_column(Float, nullable=True)
     raw_speech_result_json: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+    raw_transcription_result_json: Mapped[dict | None] = mapped_column(JSON, nullable=True)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=lambda: datetime.now(UTC), server_default=func.now()
     )

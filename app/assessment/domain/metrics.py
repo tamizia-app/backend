@@ -17,6 +17,7 @@ class SpeakingMetrics:
     raw_speech_result_json: dict | None
     created_at: datetime
     updated_at: datetime
+    raw_transcription_result_json: dict | None = None
 
 
 @dataclass
@@ -46,3 +47,8 @@ class AssessmentResult:
     generated_at: datetime
     created_at: datetime
     updated_at: datetime
+    speaking_average_score: float | None = None
+    speaking_review_required_count: int = 0
+    total_exercises: int = 0
+    evaluated_exercises: int = 0
+    pending_exercises: int = 0

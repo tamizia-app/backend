@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import uuid
 from collections.abc import Generator
 from datetime import UTC, date, datetime, timezone
 from uuid import UUID
@@ -501,7 +502,30 @@ def test_submit_os_response(client, teacher_headers, classroom_id, student_id):
     assert data["is_correct"] is True
 
 
-def test_upload_speaking_response(client, teacher_headers, classroom_id, student_id):
+def test_upload_speaking_response(client, teacher_headers, classroom_id, student_id, monkeypatch):
+    from app.assessment.application.use_cases.assess_reading_pipeline import AssessReadingPipelineUseCase
+
+    async def mock_execute(self, command):
+        return {
+            "status": "completed",
+            "recognized_text": "hola mundo",
+            "stt_recognized_text": "hola mundo",
+            "assessment_recognized_text": "hola mundo",
+            "pronunciation_score": 85.0,
+            "accuracy_score": 80.0,
+            "fluency_score": 90.0,
+            "completeness_score": 95.0,
+            "prosody_score": None,
+            "comparison": None,
+            "review": {},
+            "error_message": None,
+            "duration_ms": 1500,
+            "raw_result_json": {"NBest": [{"PronScore": 85}]},
+            "stt": {"text": "hola mundo", "segments": [], "language": "es", "duration_ms": 1500},
+        }
+
+    monkeypatch.setattr(AssessReadingPipelineUseCase, "execute", mock_execute)
+
     tmpl_resp = client.post(
         "/api/v1/assessments/templates", headers=teacher_headers, json={"name": "T3", "version": 1}
     )
@@ -553,6 +577,432 @@ def test_upload_speaking_response(client, teacher_headers, classroom_id, student
     assert response.status_code == 200
     data = response.json()
     assert data["audio_blob_path"] is not None
+    assert data["free_transcription_text"] == "hola mundo"
+    assert data["assessment_recognized_text"] == "hola mundo"
+    assert data["pronunciation_score"] == 85.0
+    assert data["accuracy_score"] == 80.0
+    assert data["fluency_score"] == 90.0
+    assert data["completeness_score"] == 95.0
+    assert data["prosody_score"] is None
+    assert data["evaluation_status"] == "completed"
+
+
+def _create_speaking_setup(client, teacher_headers, classroom_id, student_id, exercise_type="READING_SPEAKING", expected_text="Hola mundo"):
+    tmpl_resp = client.post(
+        "/api/v1/assessments/templates", headers=teacher_headers, json={"name": "T", "version": 1}
+    )
+    template_id = tmpl_resp.json()["template_id"]
+
+    body = {
+        "type": exercise_type,
+        "title": "Test",
+        "instructions": "Read aloud",
+        "difficulty_level": 1,
+    }
+    if exercise_type in ("READING_SPEAKING", "LISTENING_SPEAKING"):
+        body["prompt_exercise"] = {
+            "prompt_text": "Read this",
+            "text_to_show": "Hola mundo",
+            "language_code": "es-PE",
+            "expected_text": expected_text,
+        }
+    elif exercise_type == "MULTIPLE_CHOICE":
+        body["mc_question"] = {
+            "question_text": "Q?",
+            "options": [{"text": "A", "is_correct": True, "order_index": 1}],
+        }
+
+    ex_resp = client.post(
+        "/api/v1/assessments/exercises",
+        headers=teacher_headers,
+        json=body,
+    ).json()
+    exercise_id = ex_resp["exercise_id"]
+
+    client.post(
+        f"/api/v1/assessments/templates/{template_id}/exercises",
+        headers=teacher_headers,
+        json={"exercise_id": exercise_id, "order_index": 1, "points": 10, "is_required": True},
+    )
+
+    asm = client.post(
+        "/api/v1/assessments",
+        headers=teacher_headers,
+        json={"template_id": template_id, "classroom_id": str(classroom_id)},
+    ).json()
+
+    att = client.post(
+        f"/api/v1/assessments/{asm['assessment_id']}/attempts",
+        headers=teacher_headers,
+        json={"student_id": str(student_id)},
+    ).json()
+
+    detail = client.get(
+        f"/api/v1/assessments/attempts/{att['attempt_id']}", headers=teacher_headers
+    ).json()
+    return detail["exercise_attempts"][0]["exercise_attempt_id"]
+
+
+def test_upload_speaking_response_saves_metrics(client, teacher_headers, classroom_id, student_id, monkeypatch):
+    from app.assessment.application.use_cases.assess_reading_pipeline import AssessReadingPipelineUseCase
+
+    async def mock_execute(self, command):
+        return {
+            "status": "completed",
+            "recognized_text": "hola mundo",
+            "stt_recognized_text": "hola mundo",
+            "assessment_recognized_text": "hola mundo",
+            "pronunciation_score": 85.0,
+            "accuracy_score": 80.0,
+            "fluency_score": 90.0,
+            "completeness_score": 95.0,
+            "prosody_score": None,
+            "comparison": None,
+            "review": {},
+            "error_message": None,
+            "duration_ms": 1500,
+            "raw_result_json": {"NBest": [{"PronScore": 85}]},
+            "stt": {"text": "hola mundo", "segments": [{"id": 0, "text": "hola mundo"}], "language": "es", "duration_ms": 1500},
+        }
+
+    monkeypatch.setattr(AssessReadingPipelineUseCase, "execute", mock_execute)
+
+    ea_id = _create_speaking_setup(client, teacher_headers, classroom_id, student_id)
+
+    resp = client.post(
+        f"/api/v1/assessments/exercise-attempts/{ea_id}/speaking-response",
+        headers=teacher_headers,
+        files={"file": ("test.wav", b"fake audio content", "audio/wav")},
+    )
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["evaluation_status"] == "completed"
+
+    with TestingSessionLocal() as db:
+        from app.assessment.infrastructure.models.metrics_model import SpeakingMetricsModel
+        metrics = db.query(SpeakingMetricsModel).first()
+        assert metrics is not None
+        assert metrics.pronunciation_score == 85.0
+        assert metrics.accuracy_score == 80.0
+        assert metrics.fluency_score == 90.0
+        assert metrics.completeness_score == 95.0
+        assert metrics.prosody_score is None
+        assert metrics.raw_speech_result_json["NBest"][0]["PronScore"] == 85
+        assert metrics.raw_transcription_result_json["text"] == "hola mundo"
+        assert metrics.raw_transcription_result_json["segments"][0]["text"] == "hola mundo"
+
+
+def test_upload_speaking_response_whisper_fails_azure_works(client, teacher_headers, classroom_id, student_id, monkeypatch):
+    from app.assessment.application.use_cases.assess_reading_pipeline import AssessReadingPipelineUseCase
+
+    async def mock_execute(self, command):
+        return {
+            "status": "partial",
+            "recognized_text": None,
+            "stt_recognized_text": None,
+            "assessment_recognized_text": "hola mundo",
+            "pronunciation_score": 85.0,
+            "accuracy_score": 80.0,
+            "fluency_score": 90.0,
+            "completeness_score": 95.0,
+            "prosody_score": None,
+            "comparison": None,
+            "review": {},
+            "error_message": "One or more assessment providers failed.",
+            "duration_ms": 1500,
+            "raw_result_json": {"NBest": [{"PronScore": 85}]},
+            "stt": {"status": "failed", "error": {"code": "STT_PROVIDER_FAILED", "message": "Whisper failed"}},
+        }
+
+    monkeypatch.setattr(AssessReadingPipelineUseCase, "execute", mock_execute)
+
+    ea_id = _create_speaking_setup(client, teacher_headers, classroom_id, student_id)
+
+    resp = client.post(
+        f"/api/v1/assessments/exercise-attempts/{ea_id}/speaking-response",
+        headers=teacher_headers,
+        files={"file": ("test.wav", b"fake audio content", "audio/wav")},
+    )
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["evaluation_status"] == "partial"
+    assert data["free_transcription_text"] is None
+    assert data["assessment_recognized_text"] == "hola mundo"
+    assert data["pronunciation_score"] == 85.0
+
+
+def test_upload_speaking_response_azure_fails_whisper_works(client, teacher_headers, classroom_id, student_id, monkeypatch):
+    from app.assessment.application.use_cases.assess_reading_pipeline import AssessReadingPipelineUseCase
+
+    async def mock_execute(self, command):
+        return {
+            "status": "partial",
+            "recognized_text": "hola mundo",
+            "stt_recognized_text": "hola mundo",
+            "assessment_recognized_text": None,
+            "pronunciation_score": None,
+            "accuracy_score": None,
+            "fluency_score": None,
+            "completeness_score": None,
+            "prosody_score": None,
+            "comparison": {"source": "expected_text_vs_faster_whisper"},
+            "review": {"requires_review": True},
+            "error_message": "One or more assessment providers failed.",
+            "duration_ms": 1500,
+            "raw_result_json": {},
+            "stt": {"text": "hola mundo", "segments": [], "language": "es", "duration_ms": 1500},
+        }
+
+    monkeypatch.setattr(AssessReadingPipelineUseCase, "execute", mock_execute)
+
+    ea_id = _create_speaking_setup(client, teacher_headers, classroom_id, student_id)
+
+    resp = client.post(
+        f"/api/v1/assessments/exercise-attempts/{ea_id}/speaking-response",
+        headers=teacher_headers,
+        files={"file": ("test.wav", b"fake audio content", "audio/wav")},
+    )
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["evaluation_status"] == "partial"
+    assert data["free_transcription_text"] == "hola mundo"
+    assert data["assessment_recognized_text"] is None
+    assert data["pronunciation_score"] is None
+    assert data["comparison"] is not None
+    assert data["review"] is not None
+
+
+def test_upload_speaking_response_both_fail(client, teacher_headers, classroom_id, student_id, monkeypatch):
+    from app.assessment.application.use_cases.assess_reading_pipeline import AssessReadingPipelineUseCase
+
+    async def mock_execute(self, command):
+        return {
+            "status": "failed",
+            "recognized_text": None,
+            "stt_recognized_text": None,
+            "assessment_recognized_text": None,
+            "pronunciation_score": None,
+            "accuracy_score": None,
+            "fluency_score": None,
+            "completeness_score": None,
+            "prosody_score": None,
+            "comparison": None,
+            "review": {},
+            "error_message": "One or more assessment providers failed.",
+            "duration_ms": 1500,
+            "raw_result_json": {},
+            "stt": {"status": "failed", "error": {"code": "STT_PROVIDER_FAILED"}},
+        }
+
+    monkeypatch.setattr(AssessReadingPipelineUseCase, "execute", mock_execute)
+
+    ea_id = _create_speaking_setup(client, teacher_headers, classroom_id, student_id)
+
+    resp = client.post(
+        f"/api/v1/assessments/exercise-attempts/{ea_id}/speaking-response",
+        headers=teacher_headers,
+        files={"file": ("test.wav", b"fake audio content", "audio/wav")},
+    )
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["evaluation_status"] == "failed"
+    assert data["audio_blob_path"] is not None
+    assert data["free_transcription_text"] is None
+    assert data["assessment_recognized_text"] is None
+    assert data["pronunciation_score"] is None
+
+
+def test_upload_speaking_response_rejects_wrong_exercise_type(client, teacher_headers, classroom_id, student_id, monkeypatch):
+    from app.assessment.application.use_cases.assess_reading_pipeline import AssessReadingPipelineUseCase
+
+    async def mock_execute(self, command):
+        return {"status": "completed", "recognized_text": ""}
+
+    monkeypatch.setattr(AssessReadingPipelineUseCase, "execute", mock_execute)
+
+    ea_id = _create_speaking_setup(client, teacher_headers, classroom_id, student_id, exercise_type="MULTIPLE_CHOICE")
+
+    resp = client.post(
+        f"/api/v1/assessments/exercise-attempts/{ea_id}/speaking-response",
+        headers=teacher_headers,
+        files={"file": ("test.wav", b"fake audio content", "audio/wav")},
+    )
+    assert resp.status_code == 400
+    assert "speaking" in resp.json()["detail"].lower()
+
+
+def test_upload_speaking_response_missing_expected_text(client, teacher_headers, classroom_id, student_id, monkeypatch):
+    from app.assessment.application.use_cases.assess_reading_pipeline import AssessReadingPipelineUseCase
+
+    async def mock_execute(self, command):
+        return {"status": "completed", "recognized_text": ""}
+
+    monkeypatch.setattr(AssessReadingPipelineUseCase, "execute", mock_execute)
+
+    ea_id = _create_speaking_setup(client, teacher_headers, classroom_id, student_id, expected_text="")
+
+    resp = client.post(
+        f"/api/v1/assessments/exercise-attempts/{ea_id}/speaking-response",
+        headers=teacher_headers,
+        files={"file": ("test.wav", b"fake audio content", "audio/wav")},
+    )
+    assert resp.status_code == 400
+    assert "expected text" in resp.json()["detail"].lower()
+
+
+def test_upload_speaking_response_uses_language_code_from_prompt(client, teacher_headers, classroom_id, student_id, monkeypatch):
+    from app.assessment.application.use_cases.assess_reading_pipeline import AssessReadingPipelineUseCase
+
+    captured_locales = []
+
+    async def mock_execute(self, command):
+        captured_locales.append(command.assessment_locale)
+        return {
+            "status": "completed",
+            "recognized_text": "hola",
+            "assessment_recognized_text": "hola",
+            "pronunciation_score": 90.0,
+            "accuracy_score": 90.0,
+            "fluency_score": 90.0,
+            "completeness_score": 90.0,
+            "prosody_score": None,
+            "raw_result_json": {},
+            "stt": {"text": "hola", "segments": [], "language": "es"},
+            "duration_ms": 1000,
+        }
+
+    monkeypatch.setattr(AssessReadingPipelineUseCase, "execute", mock_execute)
+
+    tmpl_resp = client.post(
+        "/api/v1/assessments/templates", headers=teacher_headers, json={"name": "TLang", "version": 1}
+    )
+    template_id = tmpl_resp.json()["template_id"]
+
+    ex_resp = client.post(
+        "/api/v1/assessments/exercises",
+        headers=teacher_headers,
+        json={
+            "type": "READING_SPEAKING",
+            "title": "Lang Test",
+            "prompt_exercise": {
+                "text_to_show": "Hola",
+                "language_code": "es-ES",
+                "expected_text": "Hola",
+            },
+        },
+    ).json()
+    exercise_id = ex_resp["exercise_id"]
+
+    client.post(
+        f"/api/v1/assessments/templates/{template_id}/exercises",
+        headers=teacher_headers,
+        json={"exercise_id": exercise_id, "order_index": 1, "points": 10, "is_required": True},
+    )
+
+    asm = client.post(
+        "/api/v1/assessments",
+        headers=teacher_headers,
+        json={"template_id": template_id, "classroom_id": str(classroom_id)},
+    ).json()
+
+    att = client.post(
+        f"/api/v1/assessments/{asm['assessment_id']}/attempts",
+        headers=teacher_headers,
+        json={"student_id": str(student_id)},
+    ).json()
+
+    detail = client.get(
+        f"/api/v1/assessments/attempts/{att['attempt_id']}", headers=teacher_headers
+    ).json()
+    ea_id = detail["exercise_attempts"][0]["exercise_attempt_id"]
+
+    resp = client.post(
+        f"/api/v1/assessments/exercise-attempts/{ea_id}/speaking-response",
+        headers=teacher_headers,
+        files={"file": ("test.wav", b"fake audio content", "audio/wav")},
+    )
+    assert resp.status_code == 200
+    assert captured_locales == ["es-ES"]
+
+
+def test_upload_speaking_response_prosody_none_does_not_fail(client, teacher_headers, classroom_id, student_id, monkeypatch):
+    from app.assessment.application.use_cases.assess_reading_pipeline import AssessReadingPipelineUseCase
+
+    async def mock_execute(self, command):
+        return {
+            "status": "completed",
+            "recognized_text": "hola",
+            "assessment_recognized_text": "hola",
+            "pronunciation_score": 85.0,
+            "accuracy_score": 80.0,
+            "fluency_score": 90.0,
+            "completeness_score": 95.0,
+            "prosody_score": None,
+            "raw_result_json": {},
+            "stt": {"text": "hola", "segments": [], "language": "es"},
+            "duration_ms": 1000,
+        }
+
+    monkeypatch.setattr(AssessReadingPipelineUseCase, "execute", mock_execute)
+
+    ea_id = _create_speaking_setup(client, teacher_headers, classroom_id, student_id)
+
+    resp = client.post(
+        f"/api/v1/assessments/exercise-attempts/{ea_id}/speaking-response",
+        headers=teacher_headers,
+        files={"file": ("test.wav", b"fake audio content", "audio/wav")},
+    )
+    assert resp.status_code == 200
+    assert resp.json()["prosody_score"] is None
+
+
+def test_upload_speaking_response_update_existing(client, teacher_headers, classroom_id, student_id, monkeypatch):
+    from app.assessment.application.use_cases.assess_reading_pipeline import AssessReadingPipelineUseCase
+
+    call_count = 0
+
+    async def mock_execute(self, command):
+        nonlocal call_count
+        call_count += 1
+        return {
+            "status": "completed",
+            "recognized_text": f"version {call_count}",
+            "assessment_recognized_text": f"version {call_count}",
+            "pronunciation_score": 85.0,
+            "accuracy_score": 80.0,
+            "fluency_score": 90.0,
+            "completeness_score": 95.0,
+            "prosody_score": None,
+            "raw_result_json": {},
+            "stt": {"text": f"version {call_count}", "segments": [], "language": "es"},
+            "duration_ms": 1500,
+        }
+
+    monkeypatch.setattr(AssessReadingPipelineUseCase, "execute", mock_execute)
+
+    ea_id = _create_speaking_setup(client, teacher_headers, classroom_id, student_id)
+
+    resp1 = client.post(
+        f"/api/v1/assessments/exercise-attempts/{ea_id}/speaking-response",
+        headers=teacher_headers,
+        files={"file": ("test.wav", b"fake audio content", "audio/wav")},
+    )
+    assert resp1.status_code == 200
+    assert resp1.json()["free_transcription_text"] == "version 1"
+
+    resp2 = client.post(
+        f"/api/v1/assessments/exercise-attempts/{ea_id}/speaking-response",
+        headers=teacher_headers,
+        files={"file": ("test2.wav", b"more fake audio", "audio/wav")},
+    )
+    assert resp2.status_code == 200
+    assert resp2.json()["free_transcription_text"] == "version 2"
+
+    with TestingSessionLocal() as db:
+        from app.assessment.infrastructure.models.response_model import SpeakingResponseModel
+        records = db.query(SpeakingResponseModel).all()
+        assert len(records) == 1
+        assert records[0].free_transcription_text == "version 2"
 
 
 def test_finish_attempt_and_get_result(client, teacher_headers, classroom_id, student_id):
@@ -627,3 +1077,69 @@ def test_finish_attempt_and_get_result(client, teacher_headers, classroom_id, st
     )
     assert result_get.status_code == 200
     assert result_get.json()["final_score"] == result_data["final_score"]
+
+
+def test_speaking_response_model_new_fields():
+    """free_transcription_text and assessment_recognized_text can be stored and retrieved."""
+    from app.assessment.infrastructure.models.response_model import SpeakingResponseModel
+    from app.shared.base import Base
+    from sqlalchemy import create_engine
+    from sqlalchemy.orm import Session, sessionmaker
+    from sqlalchemy.pool import StaticPool
+
+    engine = create_engine(
+        "sqlite+pysqlite://",
+        connect_args={"check_same_thread": False},
+        poolclass=StaticPool,
+    )
+    Base.metadata.create_all(engine)
+    session = sessionmaker(bind=engine)()
+
+    response = SpeakingResponseModel(
+        id=uuid.uuid4(),
+        exercise_attempt_id=uuid.uuid4(),
+        audio_blob_path="test.wav",
+        original_filename="test.wav",
+        content_type="audio/wav",
+        duration_ms=1000,
+        recognized_text="whisper legacy",
+        free_transcription_text="whisper free text",
+        assessment_recognized_text="azure aligned text",
+    )
+    session.add(response)
+    session.flush()
+    session.refresh(response)
+    assert response.free_transcription_text == "whisper free text"
+    assert response.assessment_recognized_text == "azure aligned text"
+    assert response.recognized_text == "whisper legacy"
+    session.close()
+
+
+def test_speaking_metrics_model_new_fields():
+    """raw_transcription_result_json can be stored and retrieved."""
+    from app.assessment.infrastructure.models.metrics_model import SpeakingMetricsModel
+    from app.shared.base import Base
+    from sqlalchemy import create_engine
+    from sqlalchemy.orm import Session, sessionmaker
+    from sqlalchemy.pool import StaticPool
+
+    engine = create_engine(
+        "sqlite+pysqlite://",
+        connect_args={"check_same_thread": False},
+        poolclass=StaticPool,
+    )
+    Base.metadata.create_all(engine)
+    session = sessionmaker(bind=engine)()
+
+    metrics = SpeakingMetricsModel(
+        id=uuid.uuid4(),
+        speaking_response_id=uuid.uuid4(),
+        raw_transcription_result_json={"text": "whisper result", "segments": []},
+        raw_speech_result_json={"NBest": [{"PronScore": 90}]},
+    )
+    session.add(metrics)
+    session.flush()
+    session.refresh(metrics)
+    assert metrics.raw_transcription_result_json["text"] == "whisper result"
+    assert metrics.raw_speech_result_json["NBest"][0]["PronScore"] == 90
+    session.close()

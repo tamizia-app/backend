@@ -80,6 +80,7 @@ from app.assessment.infrastructure.repositories.assessment_repositories import (
     SQLAlchemyOSQuestionRepository,
     SQLAlchemyOSResponseRepository,
     SQLAlchemyPromptExerciseRepository,
+    SQLAlchemySpeakingMetricsRepository,
     SQLAlchemySpeakingResponseRepository,
     SQLAlchemyTemplateExerciseRepository,
     SQLAlchemyTemplateRepository,
@@ -578,7 +579,7 @@ def submit_os_response(
     "/exercise-attempts/{exercise_attempt_id}/speaking-response",
     response_model=SpeakingResponseResponse,
 )
-def upload_speaking_response(
+async def upload_speaking_response(
     exercise_attempt_id: UUID,
     file: UploadFile,
     db: Session = Depends(get_db),
@@ -592,6 +593,15 @@ def upload_speaking_response(
     if len(content) > MAX_AUDIO_SIZE:
         raise HTTPException(status_code=400, detail="Audio file exceeds 20 MB limit")
 
+    settings = get_settings()
+    whisper_config = WhisperConfig.from_settings(settings)
+    pipeline = AssessReadingPipelineUseCase(
+        audio_processor=AssessmentAudioProcessor(),
+        stt_service=FasterWhisperSpeechToTextAdapter(whisper_config),
+        pronunciation_service=AzureSpeechPronunciationAssessmentService(settings),
+        low_logprob_threshold=whisper_config.low_confidence_threshold,
+    )
+
     uc = UploadSpeakingResponseUseCase(
         exercise_attempt_repo=SQLAlchemyExerciseAttemptRepository(db),
         template_exercise_repo=SQLAlchemyTemplateExerciseRepository(db),
@@ -599,10 +609,14 @@ def upload_speaking_response(
         assessment_attempt_repo=SQLAlchemyAssessmentAttemptRepository(db),
         assessment_repo=SQLAlchemyAssessmentRepository(db),
         speaking_response_repo=SQLAlchemySpeakingResponseRepository(db),
-        blob_storage=AzureAssessmentBlobStorage(get_settings()),
+        speaking_metrics_repo=SQLAlchemySpeakingMetricsRepository(db),
+        prompt_exercise_repo=SQLAlchemyPromptExerciseRepository(db),
+        expected_answer_repo=SQLAlchemyExpectedAnswerRepository(db),
+        blob_storage=AzureAssessmentBlobStorage(settings),
+        pipeline=pipeline,
     )
     try:
-        result = uc.execute(
+        result = await uc.execute(
             UploadSpeakingResponseCommand(
                 exercise_attempt_id=exercise_attempt_id,
                 file_content=content,
@@ -621,6 +635,18 @@ def upload_speaking_response(
         original_filename=result.original_filename,
         content_type=result.content_type,
         duration_ms=result.duration_ms,
+        free_transcription_text=result.free_transcription_text,
+        assessment_recognized_text=result.assessment_recognized_text,
+        recognized_text=result.recognized_text,
+        pronunciation_score=result.pronunciation_score,
+        accuracy_score=result.accuracy_score,
+        fluency_score=result.fluency_score,
+        completeness_score=result.completeness_score,
+        prosody_score=result.prosody_score,
+        evaluation_status=result.evaluation_status,
+        comparison=result.comparison,
+        review=result.review,
+        error_message=result.error_message,
     )
 
 
@@ -688,6 +714,9 @@ def finish_attempt(
         os_response_repo=SQLAlchemyOSResponseRepository(db),
         speaking_response_repo=SQLAlchemySpeakingResponseRepository(db),
         writing_response_repo=SQLAlchemyWritingResponseRepository(db),
+        speaking_metrics_repo=SQLAlchemySpeakingMetricsRepository(db),
+        prompt_exercise_repo=SQLAlchemyPromptExerciseRepository(db),
+        expected_answer_repo=SQLAlchemyExpectedAnswerRepository(db),
         result_repo=SQLAlchemyAssessmentResultRepository(db),
     )
     try:
@@ -705,6 +734,11 @@ def finish_attempt(
         writing_completed_count=result.writing_completed_count,
         intervention_level=result.intervention_level.value if result.intervention_level else None,
         generated_at=result.generated_at,
+        speaking_average_score=result.speaking_average_score,
+        speaking_review_required_count=result.speaking_review_required_count,
+        total_exercises=result.total_exercises,
+        evaluated_exercises=result.evaluated_exercises,
+        pending_exercises=result.pending_exercises,
     )
 
 
@@ -733,6 +767,11 @@ def get_result(
         writing_completed_count=result.writing_completed_count,
         intervention_level=result.intervention_level.value if result.intervention_level else None,
         generated_at=result.generated_at,
+        speaking_average_score=result.speaking_average_score,
+        speaking_review_required_count=result.speaking_review_required_count,
+        total_exercises=result.total_exercises,
+        evaluated_exercises=result.evaluated_exercises,
+        pending_exercises=result.pending_exercises,
     )
 
 
@@ -788,7 +827,7 @@ async def dev_pronunciation_assessment(
     if not reference_text.strip():
         raise HTTPException(status_code=422, detail="Expected text must not be empty")
     try:
-        whisper_config = WhisperConfig.from_environment()
+        whisper_config = WhisperConfig.from_settings(get_settings())
         pipeline = AssessReadingPipelineUseCase(
             audio_processor=AssessmentAudioProcessor(),
             stt_service=FasterWhisperSpeechToTextAdapter(whisper_config),
@@ -818,7 +857,7 @@ async def dev_pronunciation_assessment(
 def dev_compare_languages(
     file: UploadFile,
     reference_text: str = Form(...),
-    language_codes: str = Form("es-MX,es-ES"),
+    language_codes: str = Form("es-PE,es-ES,es-MX"),
     current_user: UserModel = Depends(get_current_user),
 ) -> dict:
     _reject_if_production()

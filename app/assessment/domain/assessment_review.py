@@ -12,6 +12,11 @@ def determine_manual_review(
     low_logprob_threshold: float,
     stt_failed: bool = False,
     azure_failed: bool = False,
+    evaluation_status: str | None = None,
+    pronunciation_score: float | None = None,
+    accuracy_score: float | None = None,
+    completeness_score: float | None = None,
+    comparison: dict | None = None,
 ) -> dict:
     reasons: list[str] = []
     if stt_failed:
@@ -64,6 +69,26 @@ def determine_manual_review(
         divergence = compare_texts(transcription.text, azure_text)
         if divergence.wer is not None and divergence.wer >= 0.6:
             reasons.append("ASR_AZURE_TRANSCRIPT_DIVERGENCE")
+
+    if evaluation_status == "partial":
+        reasons.append("PARTIAL_EVALUATION")
+    elif evaluation_status == "failed":
+        reasons.append("FAILED_EVALUATION")
+
+    if comparison:
+        wer_pct = comparison.get("wer_percentage")
+        if wer_pct is not None and wer_pct >= 40:
+            reasons.append("HIGH_WORD_ERROR_RATE")
+        lexical_match = comparison.get("lexical_match_percentage")
+        if lexical_match is not None and lexical_match < 70:
+            reasons.append("LOW_LEXICAL_MATCH")
+
+    if pronunciation_score is not None and pronunciation_score < 70:
+        reasons.append("LOW_PRONUNCIATION_SCORE")
+    if accuracy_score is not None and accuracy_score < 70:
+        reasons.append("LOW_ACCURACY_SCORE")
+    if completeness_score is not None and completeness_score < 70:
+        reasons.append("LOW_COMPLETENESS_SCORE")
 
     return {"required": bool(reasons), "reasons": list(dict.fromkeys(reasons))}
 

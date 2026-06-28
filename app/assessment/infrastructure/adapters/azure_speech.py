@@ -21,7 +21,7 @@ from app.core.config import Settings
 
 logger = logging.getLogger(__name__)
 
-DEFAULT_ASSESSMENT_LOCALE = "es-MX"
+DEFAULT_ASSESSMENT_LOCALE = "es-PE"
 ASSESSMENT_LOCALE_ENV = "AZURE_SPEECH_ASSESSMENT_LOCALE"
 _LOCALE_PATTERN = re.compile(r"^[a-z]{2,3}(?:-[A-Z]{2})$")
 _NUS_SCORE_KEYS = {

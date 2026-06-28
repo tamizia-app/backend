@@ -170,6 +170,11 @@ class AssessReadingPipelineUseCase:
             low_logprob_threshold=self._low_logprob_threshold,
             stt_failed=stt_failed,
             azure_failed=azure_failed,
+            evaluation_status=status,
+            pronunciation_score=assessment.pronunciation_score if assessment else None,
+            accuracy_score=assessment.accuracy_score if assessment else None,
+            completeness_score=assessment.completeness_score if assessment else None,
+            comparison=comparison,
         )
 
         warnings = list(prepared.warnings)

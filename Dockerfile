@@ -5,9 +5,14 @@ ENV PYTHONUNBUFFERED=1
 
 WORKDIR /app
 
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends ffmpeg \
+    && rm -rf /var/lib/apt/lists/*
+
 COPY . .
 
-RUN pip install --no-cache-dir --default-timeout=120 --upgrade "pip<25.0" && pip install --no-cache-dir --default-timeout=120 .
+RUN pip install --no-cache-dir --default-timeout=120 --upgrade "pip<25.0" \
+    && pip install --no-cache-dir --default-timeout=120 .
 
 EXPOSE 8000
 

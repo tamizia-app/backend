@@ -16,7 +16,7 @@ from app.assessment.application.ports.repositories import (
     TemplateExerciseRepository,
 )
 from app.assessment.application.results import OSResponseResult
-from app.assessment.domain.enums import ExerciseType
+from app.assessment.domain.enums import ExerciseType, ExerciseAttemptStatus
 from app.assessment.domain.response import OSResponse
 
 
@@ -91,4 +91,7 @@ class SubmitOSResponseUseCase:
                 )
             )
 
+        ea.status = ExerciseAttemptStatus.ANSWERED
+        ea.submitted_at = now
+        self._exercise_attempt_repo.update(ea)
         return OSResponseAssembler.to_result(response)

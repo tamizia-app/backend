@@ -35,6 +35,8 @@ class SpeakingResponse:
     recognized_text: str | None
     created_at: datetime
     updated_at: datetime
+    free_transcription_text: str | None = None
+    assessment_recognized_text: str | None = None
 
 
 @dataclass

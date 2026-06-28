@@ -145,13 +145,17 @@ def test_cpu_and_cuda_configuration_are_not_hardcoded():
     assert (cuda.device, cuda.compute_type) == ("cuda", "float16")
 
 
-def test_configuration_is_read_from_environment(monkeypatch):
-    monkeypatch.setenv("WHISPER_MODEL_SIZE", "base")
-    monkeypatch.setenv("WHISPER_DEVICE", "cuda")
-    monkeypatch.setenv("WHISPER_COMPUTE_TYPE", "float16")
-    monkeypatch.setenv("WHISPER_BEAM_SIZE", "3")
-    monkeypatch.setenv("WHISPER_VAD_FILTER", "true")
-    config = WhisperConfig.from_environment()
+def test_configuration_is_read_from_settings():
+    from app.core.config import Settings
+    settings = Settings(
+        _env_file=None,
+        whisper_model_size="base",
+        whisper_device="cuda",
+        whisper_compute_type="float16",
+        whisper_beam_size=3,
+        whisper_vad_filter=True,
+    )
+    config = WhisperConfig.from_settings(settings)
     assert config.model_size == "base"
     assert config.device == "cuda"
     assert config.compute_type == "float16"
@@ -430,6 +434,182 @@ def test_manual_review_rules_cover_quality_timestamps_repetition_and_unicode():
         "ASR_REPETITION",
         "ASR_AZURE_TRANSCRIPT_DIVERGENCE",
     }.issubset(review["reasons"])
+
+
+def _good_transcription(text: str = "El gato está en la casa") -> TranscriptionResult:
+    return TranscriptionResult(
+        text=text,
+        language="es",
+        language_probability=0.98,
+        duration_seconds=3.2,
+        segments=[
+            TranscriptionSegment(
+                text=text,
+                start_seconds=0.1,
+                end_seconds=3.1,
+                avg_logprob=-0.2,
+                no_speech_prob=0.01,
+                words=[TranscriptionWord("El", 0.1, 0.2, 0.95), TranscriptionWord("gato", 0.3, 0.5, 0.95)],
+            )
+        ],
+        provider="faster_whisper",
+        model="small",
+    )
+
+
+def test_review_perfect_case():
+    transcription = _good_transcription()
+    review = determine_manual_review(
+        transcription,
+        azure_text="El gato está en la casa",
+        audio_duration_seconds=3.2,
+        low_logprob_threshold=-1.0,
+        evaluation_status="completed",
+        pronunciation_score=99.4,
+        accuracy_score=99.0,
+        completeness_score=100.0,
+        comparison={"lexical_match_percentage": 100.0, "wer_percentage": 0.0},
+    )
+    assert review["required"] is False
+    assert review["reasons"] == []
+
+
+def test_review_high_word_error_rate():
+    transcription = _good_transcription("Cato él está en casa")
+    review = determine_manual_review(
+        transcription,
+        azure_text="Gato El está en casa",
+        audio_duration_seconds=3.2,
+        low_logprob_threshold=-1.0,
+        evaluation_status="completed",
+        pronunciation_score=68.0,
+        accuracy_score=64.0,
+        completeness_score=67.0,
+        comparison={"lexical_match_percentage": 50.0, "wer_percentage": 50.0},
+    )
+    assert review["required"] is True
+    assert "HIGH_WORD_ERROR_RATE" in review["reasons"]
+
+
+def test_review_high_word_error_rate_66():
+    transcription = _good_transcription("El perro está afuera")
+    review = determine_manual_review(
+        transcription,
+        azure_text="El está",
+        audio_duration_seconds=3.2,
+        low_logprob_threshold=-1.0,
+        evaluation_status="completed",
+        pronunciation_score=38.0,
+        accuracy_score=26.0,
+        completeness_score=33.0,
+        comparison={"lexical_match_percentage": 33.33, "wer_percentage": 66.67},
+    )
+    assert review["required"] is True
+    assert "HIGH_WORD_ERROR_RATE" in review["reasons"]
+
+
+def test_review_low_lexical_match():
+    transcription = _good_transcription()
+    review = determine_manual_review(
+        transcription,
+        azure_text="Gato El está en casa",
+        audio_duration_seconds=3.2,
+        low_logprob_threshold=-1.0,
+        evaluation_status="completed",
+        comparison={"lexical_match_percentage": 50.0, "wer_percentage": 50.0},
+    )
+    assert review["required"] is True
+    assert "LOW_LEXICAL_MATCH" in review["reasons"]
+    assert "HIGH_WORD_ERROR_RATE" in review["reasons"]
+
+
+def test_review_low_pronunciation_score():
+    transcription = _good_transcription()
+    review = determine_manual_review(
+        transcription,
+        azure_text="El gato está en la casa",
+        audio_duration_seconds=3.2,
+        low_logprob_threshold=-1.0,
+        evaluation_status="completed",
+        pronunciation_score=68.0,
+        comparison={"lexical_match_percentage": 100.0, "wer_percentage": 0.0},
+    )
+    assert review["required"] is True
+    assert "LOW_PRONUNCIATION_SCORE" in review["reasons"]
+
+
+def test_review_low_accuracy_score():
+    transcription = _good_transcription()
+    review = determine_manual_review(
+        transcription,
+        azure_text="El gato está en la casa",
+        audio_duration_seconds=3.2,
+        low_logprob_threshold=-1.0,
+        evaluation_status="completed",
+        accuracy_score=64.0,
+        comparison={"lexical_match_percentage": 100.0, "wer_percentage": 0.0},
+    )
+    assert review["required"] is True
+    assert "LOW_ACCURACY_SCORE" in review["reasons"]
+
+
+def test_review_low_completeness_score():
+    transcription = _good_transcription()
+    review = determine_manual_review(
+        transcription,
+        azure_text="El gato está en la casa",
+        audio_duration_seconds=3.2,
+        low_logprob_threshold=-1.0,
+        evaluation_status="completed",
+        completeness_score=67.0,
+        comparison={"lexical_match_percentage": 100.0, "wer_percentage": 0.0},
+    )
+    assert review["required"] is True
+    assert "LOW_COMPLETENESS_SCORE" in review["reasons"]
+
+
+def test_review_partial_evaluation():
+    transcription = _good_transcription()
+    review = determine_manual_review(
+        transcription,
+        azure_text="El gato está en la casa",
+        audio_duration_seconds=3.2,
+        low_logprob_threshold=-1.0,
+        evaluation_status="partial",
+        comparison={"lexical_match_percentage": 100.0, "wer_percentage": 0.0},
+    )
+    assert review["required"] is True
+    assert "PARTIAL_EVALUATION" in review["reasons"]
+
+
+def test_review_failed_evaluation():
+    transcription = _good_transcription()
+    review = determine_manual_review(
+        transcription,
+        azure_text="El gato está en la casa",
+        audio_duration_seconds=3.2,
+        low_logprob_threshold=-1.0,
+        evaluation_status="failed",
+        comparison={"lexical_match_percentage": 100.0, "wer_percentage": 0.0},
+    )
+    assert review["required"] is True
+    assert "FAILED_EVALUATION" in review["reasons"]
+
+
+def test_review_prosody_null_does_not_trigger():
+    transcription = _good_transcription()
+    review = determine_manual_review(
+        transcription,
+        azure_text="El gato está en la casa",
+        audio_duration_seconds=3.2,
+        low_logprob_threshold=-1.0,
+        evaluation_status="completed",
+        pronunciation_score=99.0,
+        accuracy_score=99.0,
+        completeness_score=100.0,
+        comparison={"lexical_match_percentage": 100.0, "wer_percentage": 0.0},
+    )
+    assert review["required"] is False
 
 
 def test_result_serializes_missing_metrics_as_null():
