@@ -115,6 +115,24 @@ class PromptExerciseSchema(BaseModel):
     language_code: str | None = None
 
 
+class MCOptionSchema(BaseModel):
+    option_id: UUID
+    text: str
+    order_index: int
+
+
+class MCQuestionSchema(BaseModel):
+    question_text: str
+    image_blob_path: str | None = None
+    options: list[MCOptionSchema] = []
+
+
+class OSQuestionSchema(BaseModel):
+    question_text: str
+    image_blob_path: str | None = None
+    syllables_json: list[str] = []
+
+
 class ExerciseDetail(BaseModel):
     exercise_id: UUID
     type: str
@@ -127,6 +145,8 @@ class ExerciseDetail(BaseModel):
     points: int = 0
     is_required: bool = True
     prompt_exercise: PromptExerciseSchema | None = None
+    mc_question: MCQuestionSchema | None = None
+    os_question: OSQuestionSchema | None = None
 
 
 class ExerciseAttemptItem(BaseModel):
@@ -169,6 +189,8 @@ class MCResponseResponse(BaseModel):
     exercise_attempt_id: UUID
     selected_option_id: UUID
     is_correct: bool | None
+    created_at: datetime | None = None
+    updated_at: datetime | None = None
 
 
 class SubmitOSResponseRequest(BaseModel):
@@ -182,6 +204,8 @@ class OSResponseResponse(BaseModel):
     selected_syllables: list[str]
     formed_word: str | None
     is_correct: bool | None
+    created_at: datetime | None = None
+    updated_at: datetime | None = None
 
 
 class SpeakingResponseResponse(BaseModel):

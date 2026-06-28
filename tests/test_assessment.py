@@ -1457,3 +1457,924 @@ def test_get_speaking_response_returns_saved_data(client, teacher_headers, class
     assert data["comparison"] is not None
     assert data["review"] is not None
     assert data["review"]["required"] == False
+
+
+def test_get_attempt_detail_returns_mc_question_without_is_correct(client, teacher_headers, classroom_id, student_id):
+    tmpl_resp = client.post(
+        "/api/v1/assessments/templates", headers=teacher_headers, json={"name": "TMCQ", "version": 1}
+    )
+    template_id = tmpl_resp.json()["template_id"]
+
+    ex_resp = client.post(
+        "/api/v1/assessments/exercises",
+        headers=teacher_headers,
+        json={
+            "type": "MULTIPLE_CHOICE",
+            "title": "MC Question Test",
+            "instructions": "Pick",
+            "mc_question": {
+                "question_text": "¿Cuál es correcta?",
+                "options": [
+                    {"text": "Opción A", "is_correct": True, "order_index": 1},
+                    {"text": "Opción B", "is_correct": False, "order_index": 2},
+                ],
+            },
+        },
+    ).json()
+    exercise_id = ex_resp["exercise_id"]
+
+    client.post(
+        f"/api/v1/assessments/templates/{template_id}/exercises",
+        headers=teacher_headers,
+        json={"exercise_id": exercise_id, "order_index": 1, "points": 10, "is_required": True},
+    )
+
+    asm = client.post(
+        "/api/v1/assessments",
+        headers=teacher_headers,
+        json={"template_id": template_id, "classroom_id": str(classroom_id)},
+    ).json()
+
+    att = client.post(
+        f"/api/v1/assessments/{asm['assessment_id']}/attempts",
+        headers=teacher_headers,
+        json={"student_id": str(student_id)},
+    ).json()
+
+    detail = client.get(
+        f"/api/v1/assessments/attempts/{att['attempt_id']}",
+        headers=teacher_headers,
+    )
+    assert detail.status_code == 200
+    items = detail.json()["exercise_attempts"]
+    assert len(items) == 1
+    ex = items[0]["exercise"]
+    assert ex["type"] == "MULTIPLE_CHOICE"
+    assert "mc_question" in ex
+    mc_q = ex["mc_question"]
+    assert mc_q["question_text"] == "¿Cuál es correcta?"
+    assert "options" in mc_q
+    assert len(mc_q["options"]) == 2
+    for opt in mc_q["options"]:
+        assert "option_id" in opt
+        assert "text" in opt
+        assert "order_index" in opt
+        assert "is_correct" not in opt, "is_correct must NOT be exposed to students"
+
+
+def test_get_attempt_detail_returns_os_question_without_correct_word(client, teacher_headers, classroom_id, student_id):
+    tmpl_resp = client.post(
+        "/api/v1/assessments/templates", headers=teacher_headers, json={"name": "TOSQ", "version": 1}
+    )
+    template_id = tmpl_resp.json()["template_id"]
+
+    ex_resp = client.post(
+        "/api/v1/assessments/exercises",
+        headers=teacher_headers,
+        json={
+            "type": "ORDER_SYLLABLES",
+            "title": "OS Question Test",
+            "instructions": "Ordena",
+            "os_question": {
+                "question_text": "Ordena las sílabas",
+                "correct_word": "casa",
+                "syllables_json": ["ca", "sa"],
+            },
+        },
+    ).json()
+    exercise_id = ex_resp["exercise_id"]
+
+    client.post(
+        f"/api/v1/assessments/templates/{template_id}/exercises",
+        headers=teacher_headers,
+        json={"exercise_id": exercise_id, "order_index": 1, "points": 10, "is_required": True},
+    )
+
+    asm = client.post(
+        "/api/v1/assessments",
+        headers=teacher_headers,
+        json={"template_id": template_id, "classroom_id": str(classroom_id)},
+    ).json()
+
+    att = client.post(
+        f"/api/v1/assessments/{asm['assessment_id']}/attempts",
+        headers=teacher_headers,
+        json={"student_id": str(student_id)},
+    ).json()
+
+    detail = client.get(
+        f"/api/v1/assessments/attempts/{att['attempt_id']}",
+        headers=teacher_headers,
+    )
+    assert detail.status_code == 200
+    items = detail.json()["exercise_attempts"]
+    assert len(items) == 1
+    ex = items[0]["exercise"]
+    assert ex["type"] == "ORDER_SYLLABLES"
+    assert "os_question" in ex
+    os_q = ex["os_question"]
+    assert os_q["question_text"] == "Ordena las sílabas"
+    assert os_q["syllables_json"] == ["ca", "sa"]
+    assert "correct_word" not in os_q, "correct_word must NOT be exposed to students"
+
+
+def test_submit_mc_incorrect(client, teacher_headers, classroom_id, student_id):
+    tmpl_resp = client.post(
+        "/api/v1/assessments/templates", headers=teacher_headers, json={"name": "TMCI", "version": 1}
+    )
+    template_id = tmpl_resp.json()["template_id"]
+
+    ex_resp = client.post(
+        "/api/v1/assessments/exercises",
+        headers=teacher_headers,
+        json={
+            "type": "MULTIPLE_CHOICE",
+            "title": "MC Incorrect",
+            "mc_question": {
+                "question_text": "¿2+2?",
+                "options": [
+                    {"text": "4", "is_correct": True, "order_index": 1},
+                    {"text": "5", "is_correct": False, "order_index": 2},
+                ],
+            },
+        },
+    ).json()
+    exercise_id = ex_resp["exercise_id"]
+
+    client.post(
+        f"/api/v1/assessments/templates/{template_id}/exercises",
+        headers=teacher_headers,
+        json={"exercise_id": exercise_id, "order_index": 1, "points": 10, "is_required": True},
+    )
+
+    asm = client.post(
+        "/api/v1/assessments",
+        headers=teacher_headers,
+        json={"template_id": template_id, "classroom_id": str(classroom_id)},
+    ).json()
+
+    att = client.post(
+        f"/api/v1/assessments/{asm['assessment_id']}/attempts",
+        headers=teacher_headers,
+        json={"student_id": str(student_id)},
+    ).json()
+
+    detail = client.get(
+        f"/api/v1/assessments/attempts/{att['attempt_id']}", headers=teacher_headers
+    ).json()
+    ea_id = detail["exercise_attempts"][0]["exercise_attempt_id"]
+
+    # Get wrong option ID
+    with TestingSessionLocal() as db:
+        wrong_option = db.query(MCAnswerOptionModel).filter(MCAnswerOptionModel.is_correct == False).first()
+        wrong_option_id = wrong_option.id
+
+    response = client.post(
+        f"/api/v1/assessments/exercise-attempts/{ea_id}/mc-response",
+        headers=teacher_headers,
+        json={"selected_option_id": str(wrong_option_id)},
+    )
+    assert response.status_code == 200
+    data = response.json()
+    assert data["is_correct"] is False
+
+
+def test_submit_os_incorrect(client, teacher_headers, classroom_id, student_id):
+    tmpl_resp = client.post(
+        "/api/v1/assessments/templates", headers=teacher_headers, json={"name": "TOSI", "version": 1}
+    )
+    template_id = tmpl_resp.json()["template_id"]
+
+    ex_resp = client.post(
+        "/api/v1/assessments/exercises",
+        headers=teacher_headers,
+        json={
+            "type": "ORDER_SYLLABLES",
+            "title": "OS Incorrect",
+            "os_question": {
+                "question_text": "Ordena",
+                "correct_word": "casa",
+                "syllables_json": ["ca", "sa"],
+            },
+        },
+    ).json()
+    exercise_id = ex_resp["exercise_id"]
+
+    client.post(
+        f"/api/v1/assessments/templates/{template_id}/exercises",
+        headers=teacher_headers,
+        json={"exercise_id": exercise_id, "order_index": 1, "points": 10, "is_required": True},
+    )
+
+    asm = client.post(
+        "/api/v1/assessments",
+        headers=teacher_headers,
+        json={"template_id": template_id, "classroom_id": str(classroom_id)},
+    ).json()
+
+    att = client.post(
+        f"/api/v1/assessments/{asm['assessment_id']}/attempts",
+        headers=teacher_headers,
+        json={"student_id": str(student_id)},
+    ).json()
+
+    detail = client.get(
+        f"/api/v1/assessments/attempts/{att['attempt_id']}", headers=teacher_headers
+    ).json()
+    ea_id = detail["exercise_attempts"][0]["exercise_attempt_id"]
+
+    response = client.post(
+        f"/api/v1/assessments/exercise-attempts/{ea_id}/os-response",
+        headers=teacher_headers,
+        json={"selected_syllables": ["sa", "ca"], "formed_word": "saca"},
+    )
+    assert response.status_code == 200
+    data = response.json()
+    assert data["is_correct"] is False
+
+
+def test_mc_response_sets_answered_and_submitted_at(client, teacher_headers, classroom_id, student_id):
+    tmpl_resp = client.post(
+        "/api/v1/assessments/templates", headers=teacher_headers, json={"name": "TMCSA", "version": 1}
+    )
+    template_id = tmpl_resp.json()["template_id"]
+
+    ex_resp = client.post(
+        "/api/v1/assessments/exercises",
+        headers=teacher_headers,
+        json={
+            "type": "MULTIPLE_CHOICE",
+            "title": "MC Status",
+            "mc_question": {
+                "question_text": "Q?",
+                "options": [{"text": "A", "is_correct": True, "order_index": 1}],
+            },
+        },
+    ).json()
+
+    client.post(
+        f"/api/v1/assessments/templates/{template_id}/exercises",
+        headers=teacher_headers,
+        json={"exercise_id": ex_resp["exercise_id"], "order_index": 1, "points": 10, "is_required": True},
+    )
+
+    asm = client.post(
+        "/api/v1/assessments",
+        headers=teacher_headers,
+        json={"template_id": template_id, "classroom_id": str(classroom_id)},
+    ).json()
+
+    att = client.post(
+        f"/api/v1/assessments/{asm['assessment_id']}/attempts",
+        headers=teacher_headers,
+        json={"student_id": str(student_id)},
+    ).json()
+
+    detail = client.get(
+        f"/api/v1/assessments/attempts/{att['attempt_id']}", headers=teacher_headers
+    ).json()
+    ea_id = detail["exercise_attempts"][0]["exercise_attempt_id"]
+
+    with TestingSessionLocal() as db:
+        option = db.query(MCAnswerOptionModel).first()
+        option_id = option.id
+
+    client.post(
+        f"/api/v1/assessments/exercise-attempts/{ea_id}/mc-response",
+        headers=teacher_headers,
+        json={"selected_option_id": str(option_id)},
+    )
+
+    # Verify status updated in detail
+    detail2 = client.get(
+        f"/api/v1/assessments/attempts/{att['attempt_id']}", headers=teacher_headers
+    ).json()
+    ea = detail2["exercise_attempts"][0]
+    assert ea["status"] == "ANSWERED"
+    assert ea["submitted_at"] is not None
+
+
+def test_os_response_sets_answered_and_submitted_at(client, teacher_headers, classroom_id, student_id):
+    tmpl_resp = client.post(
+        "/api/v1/assessments/templates", headers=teacher_headers, json={"name": "TOSSA", "version": 1}
+    )
+    template_id = tmpl_resp.json()["template_id"]
+
+    ex_resp = client.post(
+        "/api/v1/assessments/exercises",
+        headers=teacher_headers,
+        json={
+            "type": "ORDER_SYLLABLES",
+            "title": "OS Status",
+            "os_question": {
+                "question_text": "Ordena",
+                "correct_word": "sol",
+                "syllables_json": ["sol"],
+            },
+        },
+    ).json()
+
+    client.post(
+        f"/api/v1/assessments/templates/{template_id}/exercises",
+        headers=teacher_headers,
+        json={"exercise_id": ex_resp["exercise_id"], "order_index": 1, "points": 10, "is_required": True},
+    )
+
+    asm = client.post(
+        "/api/v1/assessments",
+        headers=teacher_headers,
+        json={"template_id": template_id, "classroom_id": str(classroom_id)},
+    ).json()
+
+    att = client.post(
+        f"/api/v1/assessments/{asm['assessment_id']}/attempts",
+        headers=teacher_headers,
+        json={"student_id": str(student_id)},
+    ).json()
+
+    detail = client.get(
+        f"/api/v1/assessments/attempts/{att['attempt_id']}", headers=teacher_headers
+    ).json()
+    ea_id = detail["exercise_attempts"][0]["exercise_attempt_id"]
+
+    client.post(
+        f"/api/v1/assessments/exercise-attempts/{ea_id}/os-response",
+        headers=teacher_headers,
+        json={"selected_syllables": ["sol"], "formed_word": "sol"},
+    )
+
+    detail2 = client.get(
+        f"/api/v1/assessments/attempts/{att['attempt_id']}", headers=teacher_headers
+    ).json()
+    ea = detail2["exercise_attempts"][0]
+    assert ea["status"] == "ANSWERED"
+    assert ea["submitted_at"] is not None
+
+
+def test_mc_reattempt_overwrites_previous(client, teacher_headers, classroom_id, student_id):
+    tmpl_resp = client.post(
+        "/api/v1/assessments/templates", headers=teacher_headers, json={"name": "TMR", "version": 1}
+    )
+    template_id = tmpl_resp.json()["template_id"]
+
+    ex_resp = client.post(
+        "/api/v1/assessments/exercises",
+        headers=teacher_headers,
+        json={
+            "type": "MULTIPLE_CHOICE",
+            "title": "MC Reattempt",
+            "mc_question": {
+                "question_text": "¿2+2?",
+                "options": [
+                    {"text": "4", "is_correct": True, "order_index": 1},
+                    {"text": "5", "is_correct": False, "order_index": 2},
+                ],
+            },
+        },
+    ).json()
+
+    client.post(
+        f"/api/v1/assessments/templates/{template_id}/exercises",
+        headers=teacher_headers,
+        json={"exercise_id": ex_resp["exercise_id"], "order_index": 1, "points": 10, "is_required": True},
+    )
+
+    asm = client.post(
+        "/api/v1/assessments",
+        headers=teacher_headers,
+        json={"template_id": template_id, "classroom_id": str(classroom_id)},
+    ).json()
+
+    att = client.post(
+        f"/api/v1/assessments/{asm['assessment_id']}/attempts",
+        headers=teacher_headers,
+        json={"student_id": str(student_id)},
+    ).json()
+
+    detail = client.get(
+        f"/api/v1/assessments/attempts/{att['attempt_id']}", headers=teacher_headers
+    ).json()
+    ea_id = detail["exercise_attempts"][0]["exercise_attempt_id"]
+
+    with TestingSessionLocal() as db:
+        options = db.query(MCAnswerOptionModel).order_by(MCAnswerOptionModel.order_index).all()
+        correct_id = options[0].id
+        wrong_id = options[1].id
+
+    # Submit correct first
+    resp1 = client.post(
+        f"/api/v1/assessments/exercise-attempts/{ea_id}/mc-response",
+        headers=teacher_headers,
+        json={"selected_option_id": str(correct_id)},
+    )
+    assert resp1.json()["is_correct"] is True
+
+    # Submit incorrect (overwrite)
+    resp2 = client.post(
+        f"/api/v1/assessments/exercise-attempts/{ea_id}/mc-response",
+        headers=teacher_headers,
+        json={"selected_option_id": str(wrong_id)},
+    )
+    assert resp2.json()["is_correct"] is False
+
+    # Verify only one response exists
+    with TestingSessionLocal() as db:
+        responses = db.query(MCResponseModel).filter(MCResponseModel.exercise_attempt_id == uuid.UUID(ea_id)).all()
+        assert len(responses) == 1
+        assert responses[0].selected_option_id == wrong_id
+        assert responses[0].is_correct == False
+
+
+def test_os_reattempt_overwrites_previous(client, teacher_headers, classroom_id, student_id):
+    tmpl_resp = client.post(
+        "/api/v1/assessments/templates", headers=teacher_headers, json={"name": "TOR", "version": 1}
+    )
+    template_id = tmpl_resp.json()["template_id"]
+
+    ex_resp = client.post(
+        "/api/v1/assessments/exercises",
+        headers=teacher_headers,
+        json={
+            "type": "ORDER_SYLLABLES",
+            "title": "OS Reattempt",
+            "os_question": {
+                "question_text": "Ordena",
+                "correct_word": "casa",
+                "syllables_json": ["ca", "sa"],
+            },
+        },
+    ).json()
+
+    client.post(
+        f"/api/v1/assessments/templates/{template_id}/exercises",
+        headers=teacher_headers,
+        json={"exercise_id": ex_resp["exercise_id"], "order_index": 1, "points": 10, "is_required": True},
+    )
+
+    asm = client.post(
+        "/api/v1/assessments",
+        headers=teacher_headers,
+        json={"template_id": template_id, "classroom_id": str(classroom_id)},
+    ).json()
+
+    att = client.post(
+        f"/api/v1/assessments/{asm['assessment_id']}/attempts",
+        headers=teacher_headers,
+        json={"student_id": str(student_id)},
+    ).json()
+
+    detail = client.get(
+        f"/api/v1/assessments/attempts/{att['attempt_id']}", headers=teacher_headers
+    ).json()
+    ea_id = detail["exercise_attempts"][0]["exercise_attempt_id"]
+
+    # Submit correct first
+    resp1 = client.post(
+        f"/api/v1/assessments/exercise-attempts/{ea_id}/os-response",
+        headers=teacher_headers,
+        json={"selected_syllables": ["ca", "sa"], "formed_word": "casa"},
+    )
+    assert resp1.json()["is_correct"] is True
+
+    # Submit incorrect (overwrite)
+    resp2 = client.post(
+        f"/api/v1/assessments/exercise-attempts/{ea_id}/os-response",
+        headers=teacher_headers,
+        json={"selected_syllables": ["sa", "ca"], "formed_word": "saca"},
+    )
+    assert resp2.json()["is_correct"] is False
+
+    # Verify only one response exists
+    with TestingSessionLocal() as db:
+        responses = db.query(OSResponseModel).filter(OSResponseModel.exercise_attempt_id == uuid.UUID(ea_id)).all()
+        assert len(responses) == 1
+        assert responses[0].formed_word == "saca"
+        assert responses[0].is_correct == False
+
+
+def test_finish_mixed_assessment_mc_os_speaking(client, teacher_headers, classroom_id, student_id, monkeypatch):
+    from app.assessment.application.use_cases.assess_reading_pipeline import AssessReadingPipelineUseCase
+
+    async def mock_execute(self, command):
+        return {
+            "status": "completed",
+            "recognized_text": "el gato esta en la casa",
+            "stt_recognized_text": "el gato esta en la casa",
+            "assessment_recognized_text": "El gato está en la casa.",
+            "pronunciation_score": 90.0,
+            "accuracy_score": 85.0,
+            "fluency_score": 88.0,
+            "completeness_score": 95.0,
+            "prosody_score": None,
+            "comparison": None,
+            "review": {},
+            "error_message": None,
+            "duration_ms": 2000,
+            "raw_result_json": {"NBest": [{"PronScore": 90}]},
+            "stt": {"text": "el gato esta en la casa", "segments": [], "language": "es", "duration_ms": 2000},
+        }
+
+    monkeypatch.setattr(AssessReadingPipelineUseCase, "execute", mock_execute)
+
+    tmpl_resp = client.post(
+        "/api/v1/assessments/templates", headers=teacher_headers, json={"name": "TMIX", "version": 1}
+    )
+    template_id = tmpl_resp.json()["template_id"]
+
+    mc_resp = client.post(
+        "/api/v1/assessments/exercises",
+        headers=teacher_headers,
+        json={
+            "type": "MULTIPLE_CHOICE",
+            "title": "MC Mix",
+            "mc_question": {
+                "question_text": "Q?",
+                "options": [{"text": "A", "is_correct": True, "order_index": 1}],
+            },
+        },
+    ).json()
+    os_resp = client.post(
+        "/api/v1/assessments/exercises",
+        headers=teacher_headers,
+        json={
+            "type": "ORDER_SYLLABLES",
+            "title": "OS Mix",
+            "os_question": {
+                "question_text": "Ordena",
+                "correct_word": "sol",
+                "syllables_json": ["sol"],
+            },
+        },
+    ).json()
+    sp_resp = client.post(
+        "/api/v1/assessments/exercises",
+        headers=teacher_headers,
+        json={
+            "type": "READING_SPEAKING",
+            "title": "Speaking Mix",
+            "prompt_exercise": {
+                "text_to_show": "El gato",
+                "language_code": "es-PE",
+                "expected_text": "El gato está en la casa.",
+            },
+        },
+    ).json()
+    sp_exercise_id = sp_resp["exercise_id"]
+
+    for ex_id, idx in [(mc_resp["exercise_id"], 1), (os_resp["exercise_id"], 2), (sp_exercise_id, 3)]:
+        client.post(
+            f"/api/v1/assessments/templates/{template_id}/exercises",
+            headers=teacher_headers,
+            json={"exercise_id": ex_id, "order_index": idx, "points": 10, "is_required": True},
+        )
+
+    asm = client.post(
+        "/api/v1/assessments",
+        headers=teacher_headers,
+        json={"template_id": template_id, "classroom_id": str(classroom_id)},
+    ).json()
+    assessment_id = asm["assessment_id"]
+
+    att = client.post(
+        f"/api/v1/assessments/{assessment_id}/attempts",
+        headers=teacher_headers,
+        json={"student_id": str(student_id)},
+    ).json()
+    attempt_id = att["attempt_id"]
+
+    detail = client.get(
+        f"/api/v1/assessments/attempts/{attempt_id}", headers=teacher_headers
+    ).json()
+
+    # Submit MC (correct)
+    mc_ea_id = detail["exercise_attempts"][0]["exercise_attempt_id"]
+    with TestingSessionLocal() as db:
+        option = db.query(MCAnswerOptionModel).first()
+        option_id = option.id
+    client.post(
+        f"/api/v1/assessments/exercise-attempts/{mc_ea_id}/mc-response",
+        headers=teacher_headers,
+        json={"selected_option_id": str(option_id)},
+    )
+
+    # Submit OS (correct)
+    os_ea_id = detail["exercise_attempts"][1]["exercise_attempt_id"]
+    client.post(
+        f"/api/v1/assessments/exercise-attempts/{os_ea_id}/os-response",
+        headers=teacher_headers,
+        json={"selected_syllables": ["sol"], "formed_word": "sol"},
+    )
+
+    # Submit Speaking
+    sp_ea_id = detail["exercise_attempts"][2]["exercise_attempt_id"]
+    client.post(
+        f"/api/v1/assessments/exercise-attempts/{sp_ea_id}/speaking-response",
+        headers=teacher_headers,
+        files={"file": ("test.wav", b"fake audio", "audio/wav")},
+    )
+
+    # Finish
+    finish = client.post(
+        f"/api/v1/assessments/attempts/{attempt_id}/finish",
+        headers=teacher_headers,
+    )
+    data = finish.json()
+    assert data["final_score"] is not None
+    assert data["intervention_level"] in ("LOW", "MEDIUM", "HIGH")
+    # MC correct = 100, OS correct = 100, Speaking = avg(90,85,95) = 90 -> avg(100,100,90) ≈ 96.67
+    assert 90 <= data["final_score"] <= 100
+
+
+def test_finish_with_pending_required_exercise_returns_404(client, teacher_headers, classroom_id, student_id):
+    tmpl_resp = client.post(
+        "/api/v1/assessments/templates", headers=teacher_headers, json={"name": "TPEND", "version": 1}
+    )
+    template_id = tmpl_resp.json()["template_id"]
+
+    ex_resp = client.post(
+        "/api/v1/assessments/exercises",
+        headers=teacher_headers,
+        json={
+            "type": "MULTIPLE_CHOICE",
+            "title": "MC Pend",
+            "mc_question": {
+                "question_text": "Q?",
+                "options": [{"text": "A", "is_correct": True, "order_index": 1}],
+            },
+        },
+    ).json()
+
+    client.post(
+        f"/api/v1/assessments/templates/{template_id}/exercises",
+        headers=teacher_headers,
+        json={"exercise_id": ex_resp["exercise_id"], "order_index": 1, "points": 10, "is_required": True},
+    )
+
+    asm = client.post(
+        "/api/v1/assessments",
+        headers=teacher_headers,
+        json={"template_id": template_id, "classroom_id": str(classroom_id)},
+    ).json()
+    assessment_id = asm["assessment_id"]
+
+    att = client.post(
+        f"/api/v1/assessments/{assessment_id}/attempts",
+        headers=teacher_headers,
+        json={"student_id": str(student_id)},
+    ).json()
+
+    finish = client.post(
+        f"/api/v1/assessments/attempts/{att['attempt_id']}/finish",
+        headers=teacher_headers,
+    )
+    assert finish.status_code == 404
+
+
+def test_get_result_mixed_assessment_returns_correct_computed_fields(client, teacher_headers, classroom_id, student_id, monkeypatch):
+    from app.assessment.application.use_cases.assess_reading_pipeline import AssessReadingPipelineUseCase
+
+    async def mock_execute(self, command):
+        return {
+            "status": "completed",
+            "recognized_text": "el gato",
+            "stt_recognized_text": "el gato",
+            "assessment_recognized_text": "El gato.",
+            "pronunciation_score": 100.0,
+            "accuracy_score": 100.0,
+            "fluency_score": 100.0,
+            "completeness_score": 100.0,
+            "prosody_score": None,
+            "comparison": {"lexical_match_percentage": 98.0},
+            "review": {},
+            "error_message": None,
+            "duration_ms": 2000,
+            "raw_result_json": {"NBest": [{"PronScore": 100}]},
+            "stt": {"text": "el gato", "segments": [], "language": "es", "duration_ms": 2000},
+        }
+
+    monkeypatch.setattr(AssessReadingPipelineUseCase, "execute", mock_execute)
+
+    tmpl_resp = client.post(
+        "/api/v1/assessments/templates", headers=teacher_headers, json={"name": "TGR", "version": 1}
+    )
+    template_id = tmpl_resp.json()["template_id"]
+
+    mc = client.post(
+        "/api/v1/assessments/exercises", headers=teacher_headers, json={
+            "type": "MULTIPLE_CHOICE", "title": "MC",
+            "mc_question": {"question_text": "Q?", "options": [{"text": "A", "is_correct": True, "order_index": 1}]},
+        }).json()
+    os = client.post(
+        "/api/v1/assessments/exercises", headers=teacher_headers, json={
+            "type": "ORDER_SYLLABLES", "title": "OS",
+            "os_question": {"question_text": "Ordena", "correct_word": "sol", "syllables_json": ["sol"]},
+        }).json()
+    sp = client.post(
+        "/api/v1/assessments/exercises", headers=teacher_headers, json={
+            "type": "READING_SPEAKING", "title": "Speaking",
+            "prompt_exercise": {"text_to_show": "El gato", "language_code": "es-PE", "expected_text": "El gato"},
+        }).json()
+
+    for ex_id, idx in [(mc["exercise_id"], 1), (os["exercise_id"], 2), (sp["exercise_id"], 3)]:
+        client.post(
+            f"/api/v1/assessments/templates/{template_id}/exercises",
+            headers=teacher_headers,
+            json={"exercise_id": ex_id, "order_index": idx, "points": 10, "is_required": True},
+        )
+
+    asm = client.post(
+        "/api/v1/assessments", headers=teacher_headers,
+        json={"template_id": template_id, "classroom_id": str(classroom_id)},
+    ).json()
+    assessment_id = asm["assessment_id"]
+
+    att = client.post(
+        f"/api/v1/assessments/{assessment_id}/attempts", headers=teacher_headers,
+        json={"student_id": str(student_id)},
+    ).json()
+    attempt_id = att["attempt_id"]
+
+    detail = client.get(
+        f"/api/v1/assessments/attempts/{attempt_id}", headers=teacher_headers
+    ).json()
+
+    # Submit MC correct
+    mc_ea_id = detail["exercise_attempts"][0]["exercise_attempt_id"]
+    with TestingSessionLocal() as db:
+        opt = db.query(MCAnswerOptionModel).first()
+    client.post(
+        f"/api/v1/assessments/exercise-attempts/{mc_ea_id}/mc-response",
+        headers=teacher_headers, json={"selected_option_id": str(opt.id)},
+    )
+
+    # Submit OS correct
+    os_ea_id = detail["exercise_attempts"][1]["exercise_attempt_id"]
+    client.post(
+        f"/api/v1/assessments/exercise-attempts/{os_ea_id}/os-response",
+        headers=teacher_headers, json={"selected_syllables": ["sol"], "formed_word": "sol"},
+    )
+
+    # Submit Speaking
+    sp_ea_id = detail["exercise_attempts"][2]["exercise_attempt_id"]
+    client.post(
+        f"/api/v1/assessments/exercise-attempts/{sp_ea_id}/speaking-response",
+        headers=teacher_headers, files={"file": ("test.wav", b"fake", "audio/wav")},
+    )
+
+    # Finish
+    finish = client.post(
+        f"/api/v1/assessments/attempts/{attempt_id}/finish", headers=teacher_headers,
+    )
+    assert finish.status_code == 200
+    finish_data = finish.json()
+
+    # GET result
+    get_resp = client.get(
+        f"/api/v1/assessments/attempts/{attempt_id}/result", headers=teacher_headers,
+    )
+    assert get_resp.status_code == 200
+    data = get_resp.json()
+
+    assert data["total_exercises"] == 3, f"total_exercises={data['total_exercises']}"
+    assert data["evaluated_exercises"] == 3, f"evaluated_exercises={data['evaluated_exercises']}"
+    assert data["pending_exercises"] == 0, f"pending_exercises={data['pending_exercises']}"
+    assert data["speaking_average_score"] is not None, "speaking_average_score should not be None"
+    assert data["speaking_review_required_count"] == 0
+    assert data["final_score"] is not None
+    assert data["intervention_level"] == "LOW"
+    assert data["mc_correct_count"] == 1
+    assert data["os_correct_count"] == 1
+    assert data["speaking_completed_count"] == 1
+
+    # Consistency between POST finish and GET result
+    for field in ("final_score", "mc_correct_count", "os_correct_count", "speaking_completed_count",
+                  "intervention_level", "total_exercises", "evaluated_exercises", "pending_exercises"):
+        assert data[field] == finish_data.get(field), f"Mismatch on {field}: POST={finish_data.get(field)} GET={data[field]}"
+
+
+def test_get_mc_response_returns_saved_data(client, teacher_headers, classroom_id, student_id):
+    tmpl_resp = client.post(
+        "/api/v1/assessments/templates", headers=teacher_headers, json={"name": "TMCR", "version": 1}
+    )
+    template_id = tmpl_resp.json()["template_id"]
+
+    ex = client.post(
+        "/api/v1/assessments/exercises", headers=teacher_headers, json={
+            "type": "MULTIPLE_CHOICE", "title": "MC Get",
+            "mc_question": {"question_text": "Q?", "options": [{"text": "A", "is_correct": True, "order_index": 1}]},
+        }).json()
+
+    client.post(
+        f"/api/v1/assessments/templates/{template_id}/exercises",
+        headers=teacher_headers,
+        json={"exercise_id": ex["exercise_id"], "order_index": 1, "points": 10, "is_required": True},
+    )
+
+    asm = client.post(
+        "/api/v1/assessments", headers=teacher_headers,
+        json={"template_id": template_id, "classroom_id": str(classroom_id)},
+    ).json()
+
+    att = client.post(
+        f"/api/v1/assessments/{asm['assessment_id']}/attempts", headers=teacher_headers,
+        json={"student_id": str(student_id)},
+    ).json()
+
+    detail = client.get(
+        f"/api/v1/assessments/attempts/{att['attempt_id']}", headers=teacher_headers
+    ).json()
+    ea_id = detail["exercise_attempts"][0]["exercise_attempt_id"]
+
+    with TestingSessionLocal() as db:
+        opt = db.query(MCAnswerOptionModel).first()
+
+    submit = client.post(
+        f"/api/v1/assessments/exercise-attempts/{ea_id}/mc-response",
+        headers=teacher_headers, json={"selected_option_id": str(opt.id)},
+    )
+    assert submit.status_code == 200
+
+    get_resp = client.get(
+        f"/api/v1/assessments/exercise-attempts/{ea_id}/mc-response",
+        headers=teacher_headers,
+    )
+    assert get_resp.status_code == 200
+    data = get_resp.json()
+    assert data["response_id"] is not None
+    assert data["exercise_attempt_id"] == ea_id
+    assert data["selected_option_id"] == str(opt.id)
+    assert data["is_correct"] is True
+    assert data["created_at"] is not None
+    assert data["updated_at"] is not None
+
+
+def test_get_os_response_returns_saved_data(client, teacher_headers, classroom_id, student_id):
+    tmpl_resp = client.post(
+        "/api/v1/assessments/templates", headers=teacher_headers, json={"name": "TOSR", "version": 1}
+    )
+    template_id = tmpl_resp.json()["template_id"]
+
+    ex = client.post(
+        "/api/v1/assessments/exercises", headers=teacher_headers, json={
+            "type": "ORDER_SYLLABLES", "title": "OS Get",
+            "os_question": {"question_text": "Ordena", "correct_word": "casa", "syllables_json": ["ca", "sa"]},
+        }).json()
+
+    client.post(
+        f"/api/v1/assessments/templates/{template_id}/exercises",
+        headers=teacher_headers,
+        json={"exercise_id": ex["exercise_id"], "order_index": 1, "points": 10, "is_required": True},
+    )
+
+    asm = client.post(
+        "/api/v1/assessments", headers=teacher_headers,
+        json={"template_id": template_id, "classroom_id": str(classroom_id)},
+    ).json()
+
+    att = client.post(
+        f"/api/v1/assessments/{asm['assessment_id']}/attempts", headers=teacher_headers,
+        json={"student_id": str(student_id)},
+    ).json()
+
+    detail = client.get(
+        f"/api/v1/assessments/attempts/{att['attempt_id']}", headers=teacher_headers
+    ).json()
+    ea_id = detail["exercise_attempts"][0]["exercise_attempt_id"]
+
+    submit = client.post(
+        f"/api/v1/assessments/exercise-attempts/{ea_id}/os-response",
+        headers=teacher_headers, json={"selected_syllables": ["ca", "sa"], "formed_word": "casa"},
+    )
+    assert submit.status_code == 200
+
+    get_resp = client.get(
+        f"/api/v1/assessments/exercise-attempts/{ea_id}/os-response",
+        headers=teacher_headers,
+    )
+    assert get_resp.status_code == 200
+    data = get_resp.json()
+    assert data["response_id"] is not None
+    assert data["exercise_attempt_id"] == ea_id
+    assert data["selected_syllables"] == ["ca", "sa"]
+    assert data["formed_word"] == "casa"
+    assert data["is_correct"] is True
+    assert data["created_at"] is not None
+    assert data["updated_at"] is not None
+
+
+def test_get_mc_response_not_found(client, teacher_headers):
+    fake_id = uuid.uuid4()
+    resp = client.get(
+        f"/api/v1/assessments/exercise-attempts/{fake_id}/mc-response",
+        headers=teacher_headers,
+    )
+    assert resp.status_code == 404
+
+
+def test_get_os_response_not_found(client, teacher_headers):
+    fake_id = uuid.uuid4()
+    resp = client.get(
+        f"/api/v1/assessments/exercise-attempts/{fake_id}/os-response",
+        headers=teacher_headers,
+    )
+    assert resp.status_code == 404

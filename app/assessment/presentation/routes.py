@@ -546,6 +546,10 @@ def get_attempt(
     te_repo = SQLAlchemyTemplateExerciseRepository(db)
     ex_repo = SQLAlchemyExerciseRepository(db)
     prompt_repo = SQLAlchemyPromptExerciseRepository(db)
+    mc_q_repo = SQLAlchemyMCQuestionRepository(db)
+    mc_opt_repo = SQLAlchemyMCAnswerOptionRepository(db)
+    os_q_repo = SQLAlchemyOSQuestionRepository(db)
+    os_a_repo = SQLAlchemyOSAnswerRepository(db)
     exercise_attempt_items = []
     for ea in exercise_attempts:
         te = te_repo.find_by_id(ea.template_exercise_id)
@@ -557,7 +561,37 @@ def get_attempt(
                     ExerciseType.READING_SPEAKING, ExerciseType.LISTENING_SPEAKING,
                     ExerciseType.READING_WRITING, ExerciseType.LISTENING_WRITING,
                 ) else None
-                from app.assessment.presentation.schemas import PromptExerciseSchema, ExerciseDetail
+                from app.assessment.presentation.schemas import (
+                    PromptExerciseSchema, ExerciseDetail,
+                    MCOptionSchema, MCQuestionSchema, OSQuestionSchema,
+                )
+                mc_question = None
+                os_question = None
+                if exercise.type == ExerciseType.MULTIPLE_CHOICE:
+                    mc_q = mc_q_repo.find_by_exercise_id(exercise.id)
+                    if mc_q:
+                        options = mc_opt_repo.find_by_question_id(mc_q.id)
+                        mc_question = MCQuestionSchema(
+                            question_text=mc_q.question_text,
+                            image_blob_path=mc_q.image_blob_path,
+                            options=[
+                                MCOptionSchema(
+                                    option_id=opt.id,
+                                    text=opt.text,
+                                    order_index=opt.order_index,
+                                )
+                                for opt in options
+                            ],
+                        )
+                elif exercise.type == ExerciseType.ORDER_SYLLABLES:
+                    os_q = os_q_repo.find_by_exercise_id(exercise.id)
+                    if os_q:
+                        os_a = os_a_repo.find_by_question_id(os_q.id)
+                        os_question = OSQuestionSchema(
+                            question_text=os_q.question_text,
+                            image_blob_path=os_q.image_blob_path,
+                            syllables_json=os_a.syllables_json if os_a else [],
+                        )
                 exercise_detail = ExerciseDetail(
                     exercise_id=exercise.id,
                     type=exercise.type.value,
@@ -576,6 +610,8 @@ def get_attempt(
                         image_blob_path=prompt.image_blob_path,
                         language_code=prompt.language_code,
                     ) if prompt else None,
+                    mc_question=mc_question,
+                    os_question=os_question,
                 )
         exercise_attempt_items.append(
             ExerciseAttemptItem(
@@ -900,6 +936,16 @@ def get_result(
     uc = GetAssessmentResultUseCase(
         attempt_repo=SQLAlchemyAssessmentAttemptRepository(db),
         result_repo=SQLAlchemyAssessmentResultRepository(db),
+        exercise_attempt_repo=SQLAlchemyExerciseAttemptRepository(db),
+        template_exercise_repo=SQLAlchemyTemplateExerciseRepository(db),
+        exercise_repo=SQLAlchemyExerciseRepository(db),
+        mc_response_repo=SQLAlchemyMCResponseRepository(db),
+        os_response_repo=SQLAlchemyOSResponseRepository(db),
+        speaking_response_repo=SQLAlchemySpeakingResponseRepository(db),
+        writing_response_repo=SQLAlchemyWritingResponseRepository(db),
+        speaking_metrics_repo=SQLAlchemySpeakingMetricsRepository(db),
+        prompt_exercise_repo=SQLAlchemyPromptExerciseRepository(db),
+        expected_answer_repo=SQLAlchemyExpectedAnswerRepository(db),
     )
     try:
         result = uc.execute(GetAssessmentResultQuery(attempt_id=attempt_id))
@@ -920,6 +966,55 @@ def get_result(
         total_exercises=result.total_exercises,
         evaluated_exercises=result.evaluated_exercises,
         pending_exercises=result.pending_exercises,
+    )
+
+
+@router.get(
+    "/exercise-attempts/{exercise_attempt_id}/mc-response",
+    response_model=MCResponseResponse,
+)
+def get_mc_response(
+    exercise_attempt_id: UUID,
+    db: Session = Depends(get_db),
+    current_user: UserModel = Depends(get_current_user),
+) -> MCResponseResponse:
+    _resolve_teacher_id(db, current_user.id)
+    repo = SQLAlchemyMCResponseRepository(db)
+    response = repo.find_by_exercise_attempt_id(exercise_attempt_id)
+    if not response:
+        raise HTTPException(status_code=404, detail="MC response not found")
+    return MCResponseResponse(
+        response_id=response.id,
+        exercise_attempt_id=response.exercise_attempt_id,
+        selected_option_id=response.selected_option_id,
+        is_correct=response.is_correct,
+        created_at=response.created_at,
+        updated_at=response.updated_at,
+    )
+
+
+@router.get(
+    "/exercise-attempts/{exercise_attempt_id}/os-response",
+    response_model=OSResponseResponse,
+)
+def get_os_response(
+    exercise_attempt_id: UUID,
+    db: Session = Depends(get_db),
+    current_user: UserModel = Depends(get_current_user),
+) -> OSResponseResponse:
+    _resolve_teacher_id(db, current_user.id)
+    repo = SQLAlchemyOSResponseRepository(db)
+    response = repo.find_by_exercise_attempt_id(exercise_attempt_id)
+    if not response:
+        raise HTTPException(status_code=404, detail="OS response not found")
+    return OSResponseResponse(
+        response_id=response.id,
+        exercise_attempt_id=response.exercise_attempt_id,
+        selected_syllables=response.selected_syllables_json,
+        formed_word=response.formed_word,
+        is_correct=response.is_correct,
+        created_at=response.created_at,
+        updated_at=response.updated_at,
     )
 
 
