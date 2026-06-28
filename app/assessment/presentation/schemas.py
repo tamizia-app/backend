@@ -244,6 +244,8 @@ class WritingMetricsResponse(BaseModel):
     pressure_avg: float | None = None
     bounding_box: dict | None = None
     writing_area_usage: float | None = None
+    confidence_avg: float | None = None
+    raw_ocr_result_json: dict | None = None
 
 
 class WritingResponseResponse(BaseModel):

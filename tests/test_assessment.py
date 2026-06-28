@@ -3114,3 +3114,127 @@ def test_upload_writing_without_metrics_still_succeeds(client, teacher_headers, 
         data={"payload_json": minimal_payload},
     )
     assert resp.status_code == 200
+
+
+# OCR integration tests
+def test_upload_writing_with_ocr_sets_recognized_text(client, teacher_headers, classroom_id, student_id, monkeypatch):
+    from app.assessment.infrastructure.adapters.azure_vision_ocr import AzureVisionOcrAdapter
+    from app.assessment.application.ports.ocr_service import OcrResult
+    from app.core.config import get_settings
+
+    def mock_extract_text(self, image_data):
+        return OcrResult(full_text="El gato duerme.", confidence_avg=0.95, raw_response={"blocks": []})
+
+    monkeypatch.setattr(AzureVisionOcrAdapter, "extract_text", mock_extract_text)
+    monkeypatch.setenv("AZURE_VISION_ENDPOINT", "https://fake.endpoint")
+    monkeypatch.setenv("AZURE_VISION_KEY", "fake-key")
+    get_settings.cache_clear()
+
+    try:
+        _, ea_id = _create_writing_setup(client, teacher_headers, classroom_id, student_id)
+        resp = client.post(
+            f"/api/v1/assessments/exercise-attempts/{ea_id}/writing-response",
+            headers=teacher_headers,
+            files={"file": ("writing.png", b"fake-png-content", "image/png")},
+            data={"payload_json": SAMPLE_PAYLOAD_JSON},
+        )
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["recognized_text"] == "El gato duerme."
+        assert data["metrics"] is not None
+        assert data["metrics"]["confidence_avg"] == 0.95
+        assert data["metrics"]["raw_ocr_result_json"] is not None
+    finally:
+        get_settings.cache_clear()
+
+
+def test_upload_writing_with_ocr_sets_evaluated(client, teacher_headers, classroom_id, student_id, monkeypatch):
+    from app.assessment.infrastructure.adapters.azure_vision_ocr import AzureVisionOcrAdapter
+    from app.assessment.application.ports.ocr_service import OcrResult
+    from app.core.config import get_settings
+
+    def mock_extract_text(self, image_data):
+        return OcrResult(full_text="El gato duerme.", confidence_avg=0.95)
+
+    monkeypatch.setattr(AzureVisionOcrAdapter, "extract_text", mock_extract_text)
+    monkeypatch.setenv("AZURE_VISION_ENDPOINT", "https://fake.endpoint")
+    monkeypatch.setenv("AZURE_VISION_KEY", "fake-key")
+    get_settings.cache_clear()
+
+    try:
+        attempt_id, ea_id = _create_writing_setup(client, teacher_headers, classroom_id, student_id)
+
+        client.post(
+            f"/api/v1/assessments/exercise-attempts/{ea_id}/writing-response",
+            headers=teacher_headers,
+            files={"file": ("writing.png", b"fake-png-content", "image/png")},
+            data={"payload_json": SAMPLE_PAYLOAD_JSON},
+        )
+
+        detail = client.get(f"/api/v1/assessments/attempts/{attempt_id}", headers=teacher_headers).json()
+        assert detail["exercise_attempts"][0]["status"] == "EVALUATED"
+    finally:
+        get_settings.cache_clear()
+
+
+def test_upload_writing_with_ocr_failure_falls_back_to_answered(client, teacher_headers, classroom_id, student_id, monkeypatch):
+    from app.assessment.infrastructure.adapters.azure_vision_ocr import AzureVisionOcrAdapter
+    from app.assessment.application.ports.ocr_service import OcrResult
+    from app.core.config import get_settings
+
+    def mock_extract_text(self, image_data):
+        return OcrResult(error_code="ocr_error", error_message="Something went wrong")
+
+    monkeypatch.setattr(AzureVisionOcrAdapter, "extract_text", mock_extract_text)
+    monkeypatch.setenv("AZURE_VISION_ENDPOINT", "https://fake.endpoint")
+    monkeypatch.setenv("AZURE_VISION_KEY", "fake-key")
+    get_settings.cache_clear()
+
+    try:
+        attempt_id, ea_id = _create_writing_setup(client, teacher_headers, classroom_id, student_id)
+
+        resp = client.post(
+            f"/api/v1/assessments/exercise-attempts/{ea_id}/writing-response",
+            headers=teacher_headers,
+            files={"file": ("writing.png", b"fake-png-content", "image/png")},
+            data={"payload_json": SAMPLE_PAYLOAD_JSON},
+        )
+        assert resp.status_code == 200
+        data = resp.json()
+        # recognized_text should be None (OCR failed)
+        assert data["recognized_text"] is None
+
+        detail = client.get(f"/api/v1/assessments/attempts/{attempt_id}", headers=teacher_headers).json()
+        assert detail["exercise_attempts"][0]["status"] == "ANSWERED"
+    finally:
+        get_settings.cache_clear()
+
+
+def test_upload_writing_with_ocr_empty_text_falls_back_to_answered(client, teacher_headers, classroom_id, student_id, monkeypatch):
+    from app.assessment.infrastructure.adapters.azure_vision_ocr import AzureVisionOcrAdapter
+    from app.assessment.application.ports.ocr_service import OcrResult
+    from app.core.config import get_settings
+
+    def mock_extract_text(self, image_data):
+        return OcrResult(full_text="", confidence_avg=None, raw_response={"blocks": []})
+
+    monkeypatch.setattr(AzureVisionOcrAdapter, "extract_text", mock_extract_text)
+    monkeypatch.setenv("AZURE_VISION_ENDPOINT", "https://fake.endpoint")
+    monkeypatch.setenv("AZURE_VISION_KEY", "fake-key")
+    get_settings.cache_clear()
+
+    try:
+        attempt_id, ea_id = _create_writing_setup(client, teacher_headers, classroom_id, student_id)
+
+        resp = client.post(
+            f"/api/v1/assessments/exercise-attempts/{ea_id}/writing-response",
+            headers=teacher_headers,
+            files={"file": ("writing.png", b"fake-png-content", "image/png")},
+            data={"payload_json": SAMPLE_PAYLOAD_JSON},
+        )
+        assert resp.status_code == 200
+
+        detail = client.get(f"/api/v1/assessments/attempts/{attempt_id}", headers=teacher_headers).json()
+        assert detail["exercise_attempts"][0]["status"] == "ANSWERED"
+    finally:
+        get_settings.cache_clear()

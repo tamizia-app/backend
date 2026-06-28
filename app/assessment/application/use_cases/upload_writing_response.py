@@ -8,6 +8,7 @@ from app.assessment.application.exceptions import (
     InvalidExerciseTypeError,
 )
 from app.assessment.application.ports.blob_storage import AssessmentBlobStorage
+from app.assessment.application.ports.ocr_service import OcrResult, OcrService
 from app.assessment.application.ports.repositories import (
     AssessmentAttemptRepository,
     AssessmentRepository,
@@ -43,6 +44,7 @@ class UploadWritingResponseUseCase:
         writing_response_repo: WritingResponseRepository,
         writing_metrics_repo: WritingMetricsRepository,
         blob_storage: AssessmentBlobStorage,
+        ocr_service: OcrService | None = None,
     ) -> None:
         self._exercise_attempt_repo = exercise_attempt_repo
         self._template_exercise_repo = template_exercise_repo
@@ -52,6 +54,7 @@ class UploadWritingResponseUseCase:
         self._writing_response_repo = writing_response_repo
         self._writing_metrics_repo = writing_metrics_repo
         self._blob_storage = blob_storage
+        self._ocr_service = ocr_service
 
     def execute(self, command: UploadWritingResponseCommand) -> WritingResponseResult:
         ea = self._exercise_attempt_repo.find_by_id(command.exercise_attempt_id)
@@ -90,6 +93,14 @@ class UploadWritingResponseUseCase:
         frontend_metrics = payload.get("metrics")
 
         existing = self._writing_response_repo.find_by_exercise_attempt_id(command.exercise_attempt_id)
+
+        # Run OCR on the uploaded image
+        ocr_result: OcrResult | None = None
+        recognized_text: str | None = existing.recognized_text if existing else None
+        if self._ocr_service is not None:
+            ocr_result = self._ocr_service.extract_text(command.file_content)
+            if ocr_result.full_text:
+                recognized_text = ocr_result.full_text
         if existing:
             response = self._writing_response_repo.update(
                 WritingResponse(
@@ -98,7 +109,7 @@ class UploadWritingResponseUseCase:
                     image_blob_path=blob_path,
                     original_filename=command.original_filename,
                     content_type=command.content_type,
-                    recognized_text=existing.recognized_text,
+                    recognized_text=recognized_text,
                     strokes_json=strokes,
                     canvas_metadata_json=canvas_meta,
                     input_metadata_json=input_meta,
@@ -115,7 +126,7 @@ class UploadWritingResponseUseCase:
                     image_blob_path=blob_path,
                     original_filename=command.original_filename,
                     content_type=command.content_type,
-                    recognized_text=None,
+                    recognized_text=recognized_text,
                     strokes_json=strokes,
                     canvas_metadata_json=canvas_meta,
                     input_metadata_json=input_meta,
@@ -125,8 +136,14 @@ class UploadWritingResponseUseCase:
                 )
             )
 
-        if frontend_metrics:
-            metrics_data = self._extract_metrics(frontend_metrics)
+        ocr_metrics = {}
+        if ocr_result and ocr_result.full_text:
+            ocr_metrics["confidence_avg"] = ocr_result.confidence_avg
+            ocr_metrics["raw_ocr_result_json"] = ocr_result.raw_response
+
+        if frontend_metrics or ocr_metrics:
+            metrics_data = self._extract_metrics(frontend_metrics or {})
+            metrics_data.update(ocr_metrics)
             existing_metrics = self._writing_metrics_repo.find_by_writing_response_id(response.id)
             if existing_metrics:
                 self._writing_metrics_repo.update(
@@ -149,8 +166,12 @@ class UploadWritingResponseUseCase:
                     )
                 )
 
-        # Mark exercise attempt as ANSWERED (not EVALUATED until OCR is done)
-        ea.status = ExerciseAttemptStatus.ANSWERED
+        # Mark exercise attempt as EVALUATED if OCR produced text, else ANSWERED
+        ea.status = (
+            ExerciseAttemptStatus.EVALUATED
+            if recognized_text
+            else ExerciseAttemptStatus.ANSWERED
+        )
         ea.submitted_at = now
         self._exercise_attempt_repo.update(ea)
 

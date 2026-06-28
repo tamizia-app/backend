@@ -60,6 +60,9 @@ from app.assessment.infrastructure.adapters.assessment_blob_storage import (
 from app.assessment.infrastructure.adapters.azure_speech import (
     AzureSpeechPronunciationAssessmentService,
 )
+from app.assessment.infrastructure.adapters.azure_vision_ocr import (
+    AzureVisionOcrAdapter,
+)
 from app.assessment.infrastructure.adapters.faster_whisper_stt import (
     FasterWhisperSpeechToTextAdapter,
     WhisperConfig,
@@ -944,6 +947,12 @@ def upload_writing_response(
         except json.JSONDecodeError:
             raise HTTPException(status_code=400, detail="payload_json must be valid JSON.")
 
+    settings = get_settings()
+    ocr_service = (
+        AzureVisionOcrAdapter(settings)
+        if settings.azure_vision_endpoint and settings.azure_vision_key
+        else None
+    )
     uc = UploadWritingResponseUseCase(
         exercise_attempt_repo=SQLAlchemyExerciseAttemptRepository(db),
         template_exercise_repo=SQLAlchemyTemplateExerciseRepository(db),
@@ -952,7 +961,8 @@ def upload_writing_response(
         assessment_repo=SQLAlchemyAssessmentRepository(db),
         writing_response_repo=SQLAlchemyWritingResponseRepository(db),
         writing_metrics_repo=SQLAlchemyWritingMetricsRepository(db),
-        blob_storage=AzureAssessmentBlobStorage(get_settings()),
+        blob_storage=AzureAssessmentBlobStorage(settings),
+        ocr_service=ocr_service,
     )
     try:
         result = uc.execute(
@@ -995,6 +1005,8 @@ def upload_writing_response(
                 pressure_avg=metrics.pressure_avg,
                 bounding_box=metrics.bounding_box_json,
                 writing_area_usage=metrics.writing_area_usage,
+                confidence_avg=metrics.confidence_avg,
+                raw_ocr_result_json=metrics.raw_ocr_result_json,
             )
     except Exception:
         pass
@@ -1060,6 +1072,8 @@ def get_writing_response(
             pressure_avg=metrics.pressure_avg,
             bounding_box=metrics.bounding_box_json,
             writing_area_usage=metrics.writing_area_usage,
+            confidence_avg=metrics.confidence_avg,
+            raw_ocr_result_json=metrics.raw_ocr_result_json,
         )
 
     return WritingResponseResponse(
