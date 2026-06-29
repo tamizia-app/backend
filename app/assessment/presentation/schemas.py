@@ -424,3 +424,61 @@ class AdminExerciseDetailResponse(BaseModel):
 class AdminExerciseListResponse(BaseModel):
     items: list[AdminExerciseDetailResponse]
     total: int
+
+
+# ─── History & Repeat ──────────────────────────────────────────
+
+
+class StudentAssessmentHistoryItem(BaseModel):
+    attempt_id: UUID
+    assessment_id: UUID
+    assessment_name: str | None = None
+    status: str
+    started_at: datetime
+    completed_at: datetime | None = None
+    final_score: float | None = None
+    max_score: float | None = None
+    intervention_level: str | None = None
+    mc_correct_count: int | None = None
+    os_correct_count: int | None = None
+    speaking_completed_count: int | None = None
+    speaking_average_score: float | None = None
+    speaking_review_required_count: int = 0
+    writing_completed_count: int | None = None
+    writing_average_score: float | None = None
+    writing_review_required_count: int = 0
+    total_exercises: int = 0
+    evaluated_exercises: int = 0
+    pending_exercises: int = 0
+
+
+class StudentAssessmentHistorySummary(BaseModel):
+    attempts_count: int
+    completed_attempts_count: int
+    latest_score: float | None = None
+    average_score: float | None = None
+    best_score: float | None = None
+    lowest_score: float | None = None
+    trend_percentage: float | None = None
+    latest_intervention_level: str | None = None
+    latest_completed_at: datetime | None = None
+
+
+class StudentAssessmentHistoryResponse(BaseModel):
+    student_id: UUID
+    summary: StudentAssessmentHistorySummary
+    items: list[StudentAssessmentHistoryItem]
+
+
+class RepeatAttemptRequest(BaseModel):
+    reason: str | None = None
+
+
+class RepeatAttemptResponse(BaseModel):
+    original_attempt_id: UUID
+    new_attempt_id: UUID
+    assessment_id: UUID
+    student_id: UUID
+    status: str
+    reason: str | None = None
+    exercise_attempts: list[ExerciseAttemptItem] = []

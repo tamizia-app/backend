@@ -1,6 +1,6 @@
 from datetime import UTC, datetime
 
-from sqlalchemy import DateTime, ForeignKey, String, Uuid, func
+from sqlalchemy import DateTime, ForeignKey, String, Text, Uuid, func
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.assessment.domain.enums import AttemptStatus, ExerciseAttemptStatus
@@ -22,6 +22,10 @@ class AssessmentAttemptModel(UUIDPrimaryKeyMixin, Base):
     )
     started_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
     completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    repeated_from_attempt_id: Mapped[uuid.UUID | None] = mapped_column(
+        Uuid, ForeignKey("assessment_attempts.id", ondelete="SET NULL"), nullable=True, index=True
+    )
+    repeat_reason: Mapped[str | None] = mapped_column(Text, nullable=True)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=lambda: datetime.now(UTC), server_default=func.now()
     )

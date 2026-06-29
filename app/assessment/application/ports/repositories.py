@@ -1,3 +1,4 @@
+from datetime import datetime
 from typing import Protocol
 from uuid import UUID
 
@@ -83,6 +84,17 @@ class AssessmentRepository(Protocol):
 class AssessmentAttemptRepository(Protocol):
     def find_by_id(self, attempt_id: UUID) -> AssessmentAttempt | None: ...
     def find_by_assessment_id(self, assessment_id: UUID) -> list[AssessmentAttempt]: ...
+    def find_by_student_id(
+        self,
+        student_id: UUID,
+        *,
+        status: str | None = None,
+        assessment_id: UUID | None = None,
+        date_from: datetime | None = None,
+        date_to: datetime | None = None,
+        limit: int = 20,
+        offset: int = 0,
+    ) -> list[AssessmentAttempt]: ...
     def create(self, attempt: AssessmentAttempt) -> AssessmentAttempt: ...
     def update(self, attempt: AssessmentAttempt) -> AssessmentAttempt: ...
 

@@ -1,6 +1,7 @@
+from datetime import datetime
 from uuid import UUID
 
-from sqlalchemy import select
+from sqlalchemy import and_, select
 from sqlalchemy.orm import Session
 
 from app.assessment.application.ports.repositories import (
@@ -531,6 +532,35 @@ class SQLAlchemyAssessmentAttemptRepository(AssessmentAttemptRepository):
         )
         return [self._to_domain(m) for m in models]
 
+    def find_by_student_id(
+        self,
+        student_id: UUID,
+        *,
+        status: str | None = None,
+        assessment_id: UUID | None = None,
+        date_from: datetime | None = None,
+        date_to: datetime | None = None,
+        limit: int = 20,
+        offset: int = 0,
+    ) -> list[AssessmentAttempt]:
+        conditions = [AssessmentAttemptModel.student_id == student_id]
+        if status:
+            conditions.append(AssessmentAttemptModel.status == status)
+        if assessment_id:
+            conditions.append(AssessmentAttemptModel.assessment_id == assessment_id)
+        if date_from:
+            conditions.append(AssessmentAttemptModel.started_at >= date_from)
+        if date_to:
+            conditions.append(AssessmentAttemptModel.started_at <= date_to)
+        models = self._db.scalars(
+            select(AssessmentAttemptModel)
+            .where(and_(*conditions))
+            .order_by(AssessmentAttemptModel.started_at.desc())
+            .offset(offset)
+            .limit(limit)
+        )
+        return [self._to_domain(m) for m in models]
+
     def create(self, attempt: AssessmentAttempt) -> AssessmentAttempt:
         model = AssessmentAttemptModel(
             assessment_id=attempt.assessment_id,
@@ -538,6 +568,8 @@ class SQLAlchemyAssessmentAttemptRepository(AssessmentAttemptRepository):
             status=attempt.status.value,
             started_at=attempt.started_at,
             completed_at=attempt.completed_at,
+            repeated_from_attempt_id=attempt.repeated_from_attempt_id,
+            repeat_reason=attempt.repeat_reason,
         )
         self._db.add(model)
         self._db.flush()
@@ -562,6 +594,8 @@ class SQLAlchemyAssessmentAttemptRepository(AssessmentAttemptRepository):
             completed_at=model.completed_at,
             created_at=model.created_at,
             updated_at=model.updated_at,
+            repeated_from_attempt_id=model.repeated_from_attempt_id,
+            repeat_reason=model.repeat_reason,
         )
 
 

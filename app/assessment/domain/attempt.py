@@ -15,6 +15,8 @@ class AssessmentAttempt:
     completed_at: datetime | None
     created_at: datetime
     updated_at: datetime
+    repeated_from_attempt_id: UUID | None = None
+    repeat_reason: str | None = None
 
 
 @dataclass

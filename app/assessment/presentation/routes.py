@@ -1,3 +1,4 @@
+from datetime import datetime
 from pathlib import Path
 from uuid import UUID
 
@@ -33,6 +34,14 @@ from app.assessment.application.use_cases.finish_assessment_attempt import (
 from app.assessment.application.use_cases.get_assessment_result import (
     GetAssessmentResultQuery,
     GetAssessmentResultUseCase,
+)
+from app.assessment.application.use_cases.get_student_assessment_history import (
+    GetStudentAssessmentHistoryQuery,
+    GetStudentAssessmentHistoryUseCase,
+)
+from app.assessment.application.use_cases.repeat_assessment_attempt import (
+    RepeatAssessmentAttemptCommand,
+    RepeatAssessmentAttemptUseCase,
 )
 from app.assessment.application.use_cases.start_assessment_attempt import (
     StartAssessmentAttemptCommand,
@@ -121,8 +130,11 @@ from app.assessment.presentation.schemas import (
     MCResponseResponse,
     OSResponseResponse,
     PronunciationAssessmentResponse,
+    RepeatAttemptRequest,
+    RepeatAttemptResponse,
     SpeakingResponseResponse,
     StartAttemptRequest,
+    StudentAssessmentHistoryResponse,
     SubmitMCResponseRequest,
     SubmitOSResponseRequest,
     TemplateResponse,
@@ -1343,6 +1355,97 @@ def get_result(
         pending_exercises=result.pending_exercises,
         writing_average_score=result.writing_average_score,
         writing_review_required_count=result.writing_review_required_count,
+    )
+
+
+@router.get(
+    "/students/{student_id}/history",
+    response_model=StudentAssessmentHistoryResponse,
+)
+def get_student_assessment_history(
+    student_id: UUID,
+    limit: int = 20,
+    offset: int = 0,
+    status: str | None = "COMPLETED",
+    assessment_id: UUID | None = None,
+    date_from: datetime | None = None,
+    date_to: datetime | None = None,
+    db: Session = Depends(get_db),
+    current_user: UserModel = Depends(get_current_user),
+) -> StudentAssessmentHistoryResponse:
+    _resolve_teacher_id(db, current_user.id)
+    uc = GetStudentAssessmentHistoryUseCase(
+        attempt_repo=SQLAlchemyAssessmentAttemptRepository(db),
+        result_repo=SQLAlchemyAssessmentResultRepository(db),
+        assessment_repo=SQLAlchemyAssessmentRepository(db),
+    )
+    try:
+        result = uc.execute(
+            GetStudentAssessmentHistoryQuery(
+                student_id=student_id,
+                limit=limit,
+                offset=offset,
+                status=status,
+                assessment_id=assessment_id,
+                date_from=date_from,
+                date_to=date_to,
+            )
+        )
+    except AssessmentException as e:
+        raise HTTPException(status_code=e.status_code, detail=e.detail)
+    return StudentAssessmentHistoryResponse(
+        student_id=result.student_id,
+        summary=result.summary,
+        items=result.items,
+    )
+
+
+@router.post(
+    "/attempts/{attempt_id}/repeat",
+    response_model=RepeatAttemptResponse,
+    status_code=status.HTTP_201_CREATED,
+)
+def repeat_attempt(
+    attempt_id: UUID,
+    request: RepeatAttemptRequest,
+    db: Session = Depends(get_db),
+    current_user: UserModel = Depends(get_current_user),
+) -> RepeatAttemptResponse:
+    _resolve_teacher_id(db, current_user.id)
+    uc = RepeatAssessmentAttemptUseCase(
+        attempt_repo=SQLAlchemyAssessmentAttemptRepository(db),
+        exercise_attempt_repo=SQLAlchemyExerciseAttemptRepository(db),
+        template_exercise_repo=SQLAlchemyTemplateExerciseRepository(db),
+        exercise_repo=SQLAlchemyExerciseRepository(db),
+        assessment_repo=SQLAlchemyAssessmentRepository(db),
+    )
+    try:
+        result = uc.execute(
+            RepeatAssessmentAttemptCommand(
+                attempt_id=attempt_id,
+                reason=request.reason,
+            )
+        )
+    except AssessmentException as e:
+        raise HTTPException(status_code=e.status_code, detail=e.detail)
+    db.commit()
+    return RepeatAttemptResponse(
+        original_attempt_id=attempt_id,
+        new_attempt_id=result.attempt_id,
+        assessment_id=result.assessment_id,
+        student_id=result.student_id,
+        status=result.status.value,
+        reason=request.reason,
+        exercise_attempts=[
+            ExerciseAttemptItem(
+                exercise_attempt_id=ea.exercise_attempt_id,
+                template_exercise_id=ea.template_exercise_id,
+                status=ea.status.value,
+                started_at=ea.started_at,
+                submitted_at=ea.submitted_at,
+            )
+            for ea in (result.exercise_attempts or [])
+        ],
     )
 
 
