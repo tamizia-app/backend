@@ -7,9 +7,6 @@ Create Date: 2026-03-26 10:00:00
 
 from __future__ import annotations
 
-import uuid
-from datetime import datetime, timezone
-
 from alembic import op
 import sqlalchemy as sa
 
@@ -237,58 +234,6 @@ def upgrade() -> None:
         sa.PrimaryKeyConstraint("id", name=op.f("pk_audit_logs")),
     )
     op.create_index(op.f("ix_audit_logs_user_id"), "audit_logs", ["user_id"], unique=False)
-
-    now = datetime.now(timezone.utc)
-    exercises_table = sa.table(
-        "exercises",
-        sa.column("id", sa.Uuid()),
-        sa.column("type", exercise_type_enum),
-        sa.column("title", sa.String()),
-        sa.column("instructions", sa.Text()),
-        sa.column("reference_text", sa.Text()),
-        sa.column("difficulty_level", sa.Integer()),
-        sa.column("is_active", sa.Boolean()),
-        sa.column("created_at", sa.DateTime(timezone=True)),
-        sa.column("updated_at", sa.DateTime(timezone=True)),
-    )
-    op.bulk_insert(
-        exercises_table,
-        [
-            {
-                "id": uuid.UUID("11111111-1111-1111-1111-111111111111"),
-                "type": "writing",
-                "title": "Copia de frase corta",
-                "instructions": "Pide al estudiante copiar la frase exactamente como aparece.",
-                "reference_text": "Mi casa tiene una ventana azul.",
-                "difficulty_level": 1,
-                "is_active": True,
-                "created_at": now,
-                "updated_at": now,
-            },
-            {
-                "id": uuid.UUID("22222222-2222-2222-2222-222222222222"),
-                "type": "reading",
-                "title": "Lectura en voz alta de frase corta",
-                "instructions": "Pide al estudiante leer la frase en voz alta de forma natural.",
-                "reference_text": "El perro corre por el patio.",
-                "difficulty_level": 1,
-                "is_active": True,
-                "created_at": now,
-                "updated_at": now,
-            },
-            {
-                "id": uuid.UUID("33333333-3333-3333-3333-333333333333"),
-                "type": "combined",
-                "title": "Lectura y copia guiada",
-                "instructions": "Pide al estudiante leer la oración y luego escribirla.",
-                "reference_text": "La luna brilla sobre el lago tranquilo.",
-                "difficulty_level": 2,
-                "is_active": True,
-                "created_at": now,
-                "updated_at": now,
-            },
-        ],
-    )
 
 
 def downgrade() -> None:
