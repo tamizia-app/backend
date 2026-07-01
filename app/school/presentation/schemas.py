@@ -69,6 +69,31 @@ class StudentResponse(BaseModel):
     updated_at: datetime
 
 
+class StudentClassroomInfo(BaseModel):
+    classroom_id: UUID
+    name: str
+    grade_level: str
+    section: str
+
+
+class StudentWithClassroomResponse(BaseModel):
+    student_id: UUID
+    code: str
+    age: int
+    gender: str
+    is_active: bool
+    classroom: StudentClassroomInfo
+    created_at: datetime
+    updated_at: datetime
+
+
+class StudentListResponse(BaseModel):
+    items: list[StudentWithClassroomResponse]
+    total: int
+    limit: int
+    offset: int
+
+
 class StudentConsentResponse(BaseModel):
     consent_id: UUID
     student_id: UUID

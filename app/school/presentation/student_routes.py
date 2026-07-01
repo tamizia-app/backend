@@ -2,6 +2,7 @@ from uuid import UUID
 
 from fastapi import APIRouter, Depends, UploadFile, status
 from fastapi import HTTPException
+from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.core.config import get_settings
@@ -17,6 +18,7 @@ from app.school.application.use_cases.revoke_consent import RevokeConsentCommand
 from app.school.application.use_cases.update_student import UpdateStudentCommand, UpdateStudentUseCase
 from app.school.application.use_cases.upload_consent import UploadConsentCommand, UploadConsentUseCase
 from app.school.infrastructure.adapters.blob_storage import AzureConsentBlobStorage
+from app.school.infrastructure.models.classroom_model import ClassroomModel
 from app.school.infrastructure.models.homeroom_teacher_model import HomeroomTeacherModel
 from app.school.infrastructure.repositories.student_repository import (
     SQLAlchemyStudentConsentRepository,
@@ -24,8 +26,11 @@ from app.school.infrastructure.repositories.student_repository import (
 )
 from app.school.presentation.schemas import (
     CreateStudentRequest,
+    StudentClassroomInfo,
     StudentConsentResponse,
+    StudentListResponse,
     StudentResponse,
+    StudentWithClassroomResponse,
     UpdateStudentRequest,
 )
 
@@ -274,6 +279,54 @@ def get_consent_status(
         created_at=result.created_at,
         updated_at=result.updated_at,
     )
+
+
+@student_router.get("/students", response_model=StudentListResponse)
+def list_all_students(
+    classroom_id: UUID | None = None,
+    q: str | None = None,
+    is_active: bool | None = True,
+    limit: int = 20,
+    offset: int = 0,
+    db: Session = Depends(get_db),
+    current_user: UserModel = Depends(get_current_user),
+) -> StudentListResponse:
+    teacher_id = _resolve_teacher_id(db, current_user.id)
+    repo = SQLAlchemyStudentRepository(db)
+    students = repo.find_by_teacher_id(
+        teacher_id, classroom_id=classroom_id, q=q, is_active=is_active, limit=limit, offset=offset
+    )
+    total = repo.count_by_teacher_id(
+        teacher_id, classroom_id=classroom_id, q=q, is_active=is_active
+    )
+
+    classroom_ids = list({s.classroom_id for s in students})
+    classrooms = {}
+    if classroom_ids:
+        cm = db.scalars(select(ClassroomModel).where(ClassroomModel.id.in_(classroom_ids))).all()
+        classrooms = {c.id: c for c in cm}
+
+    items = []
+    for s in students:
+        cls = classrooms.get(s.classroom_id)
+        items.append(
+            StudentWithClassroomResponse(
+                student_id=s.id,
+                code=s.code,
+                age=s.age,
+                gender=s.gender.value,
+                is_active=s.is_active,
+                classroom=StudentClassroomInfo(
+                    classroom_id=cls.id,
+                    name=cls.name,
+                    grade_level=cls.grade_level,
+                    section=cls.section,
+                ),
+                created_at=s.created_at,
+                updated_at=s.updated_at,
+            )
+        )
+    return StudentListResponse(items=items, total=total, limit=limit, offset=offset)
 
 
 @student_router.get("/students/{student_id}/consent/download")

@@ -8,6 +8,7 @@ from app.school.application.ports.student_repository import StudentRepository
 from app.school.domain.enums import Gender
 from app.school.domain.student import Student as StudentDomain
 from app.school.domain.student import StudentConsent as StudentConsentDomain
+from app.school.infrastructure.models.classroom_model import ClassroomModel
 from app.school.infrastructure.models.student_model import Student, StudentConsent
 
 
@@ -38,6 +39,54 @@ class SQLAlchemyStudentRepository(StudentRepository):
     def find_by_code(self, code: str) -> StudentDomain | None:
         model = self._db.scalar(select(Student).where(Student.code == code))
         return self._to_domain(model) if model else None
+
+    def find_by_teacher_id(
+        self,
+        teacher_id: UUID,
+        *,
+        classroom_id: UUID | None = None,
+        q: str | None = None,
+        is_active: bool | None = True,
+        limit: int = 20,
+        offset: int = 0,
+    ) -> list[StudentDomain]:
+        query = (
+            select(Student)
+            .join(ClassroomModel, Student.classroom_id == ClassroomModel.id)
+            .where(ClassroomModel.homeroom_teacher_id == teacher_id)
+        )
+        if classroom_id is not None:
+            query = query.where(Student.classroom_id == classroom_id)
+        if q is not None:
+            query = query.where(Student.code.ilike(f"%{q}%"))
+        if is_active is not None:
+            query = query.where(Student.is_active == is_active)
+        query = query.order_by(Student.code.asc()).offset(offset).limit(limit)
+        models = self._db.scalars(query)
+        return [self._to_domain(m) for m in models]
+
+    def count_by_teacher_id(
+        self,
+        teacher_id: UUID,
+        *,
+        classroom_id: UUID | None = None,
+        q: str | None = None,
+        is_active: bool | None = True,
+    ) -> int:
+        from sqlalchemy import func as f
+        query = (
+            select(f.count(Student.id))
+            .join(ClassroomModel, Student.classroom_id == ClassroomModel.id)
+            .where(ClassroomModel.homeroom_teacher_id == teacher_id)
+        )
+        if classroom_id is not None:
+            query = query.where(Student.classroom_id == classroom_id)
+        if q is not None:
+            query = query.where(Student.code.ilike(f"%{q}%"))
+        if is_active is not None:
+            query = query.where(Student.is_active == is_active)
+        result = self._db.scalar(query)
+        return result or 0
 
     def create(self, student: StudentDomain) -> StudentDomain:
         model = Student(

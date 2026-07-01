@@ -272,6 +272,17 @@ class WritingResponseResponse(BaseModel):
     updated_at: datetime | None = None
 
 
+class ExerciseSummary(BaseModel):
+    exercise_attempt_id: UUID
+    exercise_id: UUID
+    order_index: int
+    type: str
+    title: str
+    status: str
+    score: float | None = None
+    review_required: bool = False
+
+
 class AssessmentResultResponse(BaseModel):
     attempt_id: UUID
     final_score: float | None
@@ -289,6 +300,7 @@ class AssessmentResultResponse(BaseModel):
     pending_exercises: int = 0
     writing_average_score: float | None = None
     writing_review_required_count: int = 0
+    exercise_summaries: list[ExerciseSummary] = []
 
 
 class AttemptListItem(BaseModel):
@@ -429,6 +441,23 @@ class AdminExerciseListResponse(BaseModel):
 # ─── History & Repeat ──────────────────────────────────────────
 
 
+class ChartPoint(BaseModel):
+    attempt_id: UUID
+    assessment_id: UUID
+    assessment_name: str | None = None
+    completed_at: datetime | None = None
+    final_score: float | None = None
+    intervention_level: str | None = None
+
+
+class StudentInfo(BaseModel):
+    student_id: UUID
+    code: str
+    age: int
+    gender: str
+    classroom: dict | None = None
+
+
 class StudentAssessmentHistoryItem(BaseModel):
     attempt_id: UUID
     assessment_id: UUID
@@ -466,8 +495,13 @@ class StudentAssessmentHistorySummary(BaseModel):
 
 class StudentAssessmentHistoryResponse(BaseModel):
     student_id: UUID
+    student: StudentInfo | None = None
     summary: StudentAssessmentHistorySummary
+    chart_points: list[ChartPoint] = []
     items: list[StudentAssessmentHistoryItem]
+    total: int = 0
+    limit: int = 20
+    offset: int = 0
 
 
 class RepeatAttemptRequest(BaseModel):
@@ -482,3 +516,122 @@ class RepeatAttemptResponse(BaseModel):
     status: str
     reason: str | None = None
     exercise_attempts: list[ExerciseAttemptItem] = []
+
+
+class StudentAttemptItem(BaseModel):
+    attempt_id: UUID
+    assessment_id: UUID
+    assessment_name: str | None = None
+    status: str
+    started_at: datetime
+    completed_at: datetime | None = None
+    final_score: float | None = None
+    max_score: float | None = None
+    intervention_level: str | None = None
+    total_exercises: int = 0
+    evaluated_exercises: int = 0
+    pending_exercises: int = 0
+
+
+class StudentAttemptListResponse(BaseModel):
+    student_id: UUID
+    items: list[StudentAttemptItem]
+    total: int
+    limit: int
+    offset: int
+
+
+class MCResponseReview(BaseModel):
+    selected_option_id: UUID | None = None
+    selected_text: str | None = None
+    is_correct: bool | None = None
+
+
+class MCExpectedReview(BaseModel):
+    correct_option_id: UUID | None = None
+    correct_text: str | None = None
+
+
+class OSResponseReview(BaseModel):
+    selected_syllables: list[str] = []
+    formed_word: str | None = None
+    is_correct: bool | None = None
+
+
+class OSExpectedReview(BaseModel):
+    correct_word: str | None = None
+    syllables_json: list[str] = []
+
+
+class SpeakingResponseReview(BaseModel):
+    audio_blob_path: str | None = None
+    audio_url: str | None = None
+    free_transcription_text: str | None = None
+    assessment_recognized_text: str | None = None
+    recognized_text: str | None = None
+
+
+class SpeakingMetricsReview(BaseModel):
+    pronunciation_score: float | None = None
+    accuracy_score: float | None = None
+    fluency_score: float | None = None
+    completeness_score: float | None = None
+    prosody_score: float | None = None
+    lexical_match: float | None = None
+    wer_percentage: float | None = None
+
+
+class WritingResponseReview(BaseModel):
+    image_blob_path: str | None = None
+    image_url: str | None = None
+    recognized_text: str | None = None
+    original_filename: str | None = None
+    content_type: str | None = None
+
+
+class WritingMetricsReview(BaseModel):
+    confidence_avg: float | None = None
+    cer: float | None = None
+    wer: float | None = None
+    similarity_score: float | None = None
+    char_accuracy: float | None = None
+    word_accuracy: float | None = None
+    duration_ms: int | None = None
+    stroke_count: int | None = None
+    point_count: int | None = None
+    pause_count: int | None = None
+    longest_pause_ms: int | None = None
+    total_pause_time_ms: int | None = None
+    average_speed: float | None = None
+    speed_variability: float | None = None
+    writing_area_usage: float | None = None
+
+
+class ExerciseReview(BaseModel):
+    exercise_attempt_id: UUID
+    exercise_id: UUID
+    order_index: int
+    type: str
+    title: str
+    instructions: str | None = None
+    status: str
+    score: float | None = None
+    question_text: str | None = None
+    prompt_text: str | None = None
+    reference_text: str | None = None
+    response: MCResponseReview | OSResponseReview | SpeakingResponseReview | WritingResponseReview | None = None
+    expected: MCExpectedReview | OSExpectedReview | None = None
+    metrics: SpeakingMetricsReview | WritingMetricsReview | None = None
+    review_required: bool = False
+    review_reasons: list[str] = []
+
+
+class ReviewResultResponse(BaseModel):
+    attempt_id: UUID
+    status: str
+    started_at: datetime
+    completed_at: datetime | None = None
+    student: StudentInfo | None = None
+    assessment: dict | None = None
+    result: AssessmentResultResponse | None = None
+    exercise_reviews: list[ExerciseReview] = []
