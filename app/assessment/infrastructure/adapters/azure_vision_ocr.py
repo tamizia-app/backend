@@ -1,3 +1,11 @@
+# =============================================================================
+# [CAPTURA 2/3] INTEGRACIÓN CON AZURE AI VISION (OCR)
+# =============================================================================
+# Este archivo conecta la app con Azure AI Vision para extraer texto escrito
+# a mano desde imágenes (OCR). Se usa en ejercicios de escritura: el alumno
+# escribe en un papel, se toma una foto, y Azure Vision devuelve el texto.
+# =============================================================================
+
 from __future__ import annotations
 
 import json
@@ -16,12 +24,14 @@ logger = logging.getLogger(__name__)
 
 class AzureVisionOcrAdapter:
     def __init__(self, settings: Settings) -> None:
+        # --- Se crea el cliente de Azure Vision con endpoint y key ---
         self._client = ImageAnalysisClient(
             endpoint=settings.azure_vision_endpoint,
             credential=AzureKeyCredential(settings.azure_vision_key),
         )
 
     def extract_text(self, image_data: bytes) -> OcrResult:
+        # --- 1. Se envía la imagen a Azure Vision con la feature READ (OCR) ---
         try:
             result = self._client.analyze(
                 image_data=image_data,
@@ -44,6 +54,7 @@ class AzureVisionOcrAdapter:
             logger.warning("Azure Vision returned no READ result")
             return OcrResult()
 
+        # --- 2. Se procesan las líneas y palabras reconocidas ---
         lines = []
         confidences = []
         raw_lines = []
@@ -66,6 +77,7 @@ class AzureVisionOcrAdapter:
                         confidences.append(word.confidence)
                 raw_lines.append(raw_line)
 
+        # --- 3. Se arma el texto completo y el promedio de confianza ---
         full_text = "\n".join(lines)
         confidence_avg = round(sum(confidences) / len(confidences), 4) if confidences else None
 

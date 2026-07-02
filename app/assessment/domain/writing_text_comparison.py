@@ -1,3 +1,12 @@
+# =============================================================================
+# [CAPTURA 3/3] CÁLCULO DE MÉTRICAS CER (Character Error Rate) Y WER (Word Error Rate)
+# =============================================================================
+# CER y WER miden qué tan diferente es el texto reconocido (por OCR o voz)
+# respecto al texto esperado. Se usa Levenshtein distance para contar errores
+# a nivel de caracteres (CER) y palabras (WER). Si son altos, se marca el
+# ejercicio para revisión manual del docente.
+# =============================================================================
+
 from __future__ import annotations
 
 import re
@@ -46,6 +55,8 @@ def _word_levenshtein(expected_words: list[str], recognized_words: list[str]) ->
 
 
 def calculate_cer(expected: str, recognized: str) -> float:
+    # CER = (distancia Levenshtein entre textos) / (largo del texto esperado)
+    # Mide errores a nivel de cada caracter (letras, espacios)
     norm_exp = normalize_text(expected)
     norm_rec = normalize_text(recognized)
     if not norm_exp:
@@ -55,6 +66,8 @@ def calculate_cer(expected: str, recognized: str) -> float:
 
 
 def calculate_wer(expected: str, recognized: str) -> float:
+    # WER = (distancia Levenshtein entre palabras) / (cantidad de palabras esperadas)
+    # Mide errores a nivel de palabras completas
     norm_exp = normalize_text(expected)
     norm_rec = normalize_text(recognized)
     expected_words = norm_exp.split() if norm_exp else []
@@ -95,6 +108,8 @@ def determine_writing_review(
     recognized: str,
     confidence_avg: float | None = None,
 ) -> WritingReviewResult:
+    # Si CER o WER superan umbrales, o la confianza del OCR es baja,
+    # se marca el ejercicio para que el docente lo revise manualmente.
     if not recognized:
         return WritingReviewResult(
             cer=1.0,

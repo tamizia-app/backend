@@ -1,3 +1,11 @@
+# =============================================================================
+# [CAPTURA 1/3] INTEGRACIÓN CON AZURE SPEECH
+# =============================================================================
+# Este archivo conecta la app con el SDK de Azure Cognitive Services para
+# reconocimiento y evaluación de pronunciación. Azure Speech analiza un audio
+# y devuelve puntuaciones de precisión, fluidez, completitud y pronunciación.
+# =============================================================================
+
 from __future__ import annotations
 
 import gc
@@ -204,12 +212,14 @@ class AzureSpeechPronunciationAssessmentService:
         locale: str,
         reference_text: str,
     ) -> tuple[speechsdk.SpeechRecognitionResult, str | None]:
+        # --- 1. Se crea un recognizer de Azure Speech con el audio de entrada ---
         audio_config = speechsdk.AudioConfig(filename=audio_path)
         recognizer = speechsdk.SpeechRecognizer(
             speech_config=speech_config,
             language=locale,
             audio_config=audio_config,
         )
+        # --- 2. Se configura la evaluación de pronunciación (referencia, escala 0-100, fonema) ---
         pronunciation_config = speechsdk.PronunciationAssessmentConfig(
             reference_text=reference_text,
             grading_system=speechsdk.PronunciationAssessmentGradingSystem.HundredMark,
@@ -221,12 +231,12 @@ class AzureSpeechPronunciationAssessmentService:
         recognizer.session_started.connect(
             lambda event: session.update(id=getattr(event, "session_id", None))
         )
+        # --- 3. Se ejecuta el reconocimiento asíncrono y se espera el resultado ---
         result = recognizer.recognize_once_async().get()
         return result, session["id"]
 
     def _build_speech_config(self) -> speechsdk.SpeechConfig:
-        # Pronunciation Assessment is intentionally configured with region, as
-        # documented by Azure, instead of an unrelated/custom endpoint.
+        # --- Se crea la configuración con key y región de Azure ---
         return speechsdk.SpeechConfig(
             subscription=self._settings.azure_speech_key,
             region=self._settings.azure_speech_region,
