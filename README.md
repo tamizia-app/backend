@@ -1,4 +1,4 @@
-# TamizAI Backend
+# TamizAI Backend v1.0
 
 Backend para un MVP educativo de apoyo al tamizaje temprano de dificultades de lectoescritura. No realiza diagnóstico clínico.
 
