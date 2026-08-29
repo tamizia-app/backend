@@ -18,21 +18,22 @@ depends_on = None
 
 
 def upgrade() -> None:
-    op.add_column(
-        "students",
-        sa.Column("gender", sa.String(length=10), nullable=False, server_default="BOY"),
-    )
-    op.drop_column("students", "first_name")
-    op.drop_column("students", "last_name")
-    op.drop_constraint("fk_students_classroom_id_classrooms", "students", type_="foreignkey")
-    op.create_foreign_key(
-        op.f("fk_students_classroom_id_school_classrooms"),
-        "students",
-        "school_classrooms",
-        ["classroom_id"],
-        ["id"],
-        ondelete="CASCADE",
-    )
+    # Batch mode keeps the migration executable on SQLite (local/test) while
+    # retaining the same schema operations on PostgreSQL.
+    with op.batch_alter_table("students") as batch_op:
+        batch_op.add_column(
+            sa.Column("gender", sa.String(length=10), nullable=False, server_default="BOY")
+        )
+        batch_op.drop_column("first_name")
+        batch_op.drop_column("last_name")
+        batch_op.drop_constraint("fk_students_classroom_id_classrooms", type_="foreignkey")
+        batch_op.create_foreign_key(
+            op.f("fk_students_classroom_id_school_classrooms"),
+            "school_classrooms",
+            ["classroom_id"],
+            ["id"],
+            ondelete="CASCADE",
+        )
     op.create_table(
         "student_consents",
         sa.Column("id", sa.Uuid(), nullable=False),
@@ -63,15 +64,21 @@ def upgrade() -> None:
 def downgrade() -> None:
     op.drop_index(op.f("ix_student_consents_student_id"), table_name="student_consents")
     op.drop_table("student_consents")
-    op.drop_constraint("fk_students_classroom_id_school_classrooms", "students", type_="foreignkey")
-    op.create_foreign_key(
-        "fk_students_classroom_id_classrooms",
-        "students",
-        "classrooms",
-        ["classroom_id"],
-        ["id"],
-        ondelete="CASCADE",
-    )
-    op.add_column("students", sa.Column("last_name", sa.String(length=120), nullable=False, server_default=""))
-    op.add_column("students", sa.Column("first_name", sa.String(length=120), nullable=False, server_default=""))
-    op.drop_column("students", "gender")
+    with op.batch_alter_table("students") as batch_op:
+        batch_op.drop_constraint(
+            "fk_students_classroom_id_school_classrooms", type_="foreignkey"
+        )
+        batch_op.create_foreign_key(
+            "fk_students_classroom_id_classrooms",
+            "classrooms",
+            ["classroom_id"],
+            ["id"],
+            ondelete="CASCADE",
+        )
+        batch_op.add_column(
+            sa.Column("last_name", sa.String(length=120), nullable=False, server_default="")
+        )
+        batch_op.add_column(
+            sa.Column("first_name", sa.String(length=120), nullable=False, server_default="")
+        )
+        batch_op.drop_column("gender")

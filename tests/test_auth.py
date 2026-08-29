@@ -6,7 +6,7 @@ def test_login_me_refresh_logout(client):
     assert payload["access_token"]
     assert payload["refresh_token"]
 
-    me_response = client.get("/api/v1/me", headers={"Authorization": f"Bearer {payload['access_token']}"})
+    me_response = client.get("/api/v1/teachers/me", headers={"Authorization": f"Bearer {payload['access_token']}"})
     assert me_response.status_code == 200
     assert me_response.json()["email"] == "teacher@example.com"
 
@@ -15,6 +15,6 @@ def test_login_me_refresh_logout(client):
     assert refresh_response.json()["access_token"]
     assert refresh_response.json()["refresh_token"] != payload["refresh_token"]
 
-    logout_response = client.post("/api/v1/auth/logout", json={"refresh_token": refresh_response.json()["refresh_token"]})
+    logout_response = client.post("/api/v1/auth/signout", json={"refresh_token": refresh_response.json()["refresh_token"]})
     assert logout_response.status_code == 200
     assert logout_response.json()["message"] == "Logged out successfully."

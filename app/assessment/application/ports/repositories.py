@@ -9,7 +9,7 @@ from app.assessment.domain.prompt import PromptExercise, ExpectedAnswer
 from app.assessment.domain.assessment import Assessment
 from app.assessment.domain.attempt import AssessmentAttempt, ExerciseAttempt
 from app.assessment.domain.response import MCResponse, OSResponse, SpeakingResponse, WritingResponse
-from app.assessment.domain.metrics import SpeakingMetrics, WritingMetrics, AssessmentResult
+from app.assessment.domain.metrics import ExerciseScore, SpeakingMetrics, WritingMetrics, AssessmentResult
 
 
 class TemplateRepository(Protocol):
@@ -146,3 +146,9 @@ class WritingMetricsRepository(Protocol):
 class AssessmentResultRepository(Protocol):
     def find_by_attempt_id(self, attempt_id: UUID) -> AssessmentResult | None: ...
     def create(self, r: AssessmentResult) -> AssessmentResult: ...
+
+
+class ExerciseScoreRepository(Protocol):
+    def find_by_exercise_attempt_id(self, exercise_attempt_id: UUID) -> ExerciseScore | None: ...
+    def find_by_assessment_attempt_id(self, attempt_id: UUID) -> list[ExerciseScore]: ...
+    def upsert(self, score: ExerciseScore) -> ExerciseScore: ...

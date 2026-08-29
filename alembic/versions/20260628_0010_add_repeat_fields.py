@@ -18,22 +18,30 @@ depends_on = None
 
 
 def upgrade() -> None:
-    op.add_column(
-        "assessment_attempts",
-        sa.Column(
-            "repeated_from_attempt_id",
-            sa.Uuid(),
-            sa.ForeignKey("assessment_attempts.id", ondelete="SET NULL"),
-            nullable=True,
-            index=True,
-        ),
-    )
-    op.add_column(
-        "assessment_attempts",
-        sa.Column("repeat_reason", sa.Text(), nullable=True),
-    )
+    with op.batch_alter_table("assessment_attempts") as batch_op:
+        batch_op.add_column(
+            sa.Column("repeated_from_attempt_id", sa.Uuid(), nullable=True)
+        )
+        batch_op.add_column(sa.Column("repeat_reason", sa.Text(), nullable=True))
+        batch_op.create_foreign_key(
+            "fk_assessment_attempts_repeated_from_attempt_id_assessment_attempts",
+            "assessment_attempts",
+            ["repeated_from_attempt_id"],
+            ["id"],
+            ondelete="SET NULL",
+        )
+        batch_op.create_index(
+            "ix_assessment_attempts_repeated_from_attempt_id",
+            ["repeated_from_attempt_id"],
+        )
 
 
 def downgrade() -> None:
-    op.drop_column("assessment_attempts", "repeat_reason")
-    op.drop_column("assessment_attempts", "repeated_from_attempt_id")
+    with op.batch_alter_table("assessment_attempts") as batch_op:
+        batch_op.drop_index("ix_assessment_attempts_repeated_from_attempt_id")
+        batch_op.drop_constraint(
+            "fk_assessment_attempts_repeated_from_attempt_id_assessment_attempts",
+            type_="foreignkey",
+        )
+        batch_op.drop_column("repeat_reason")
+        batch_op.drop_column("repeated_from_attempt_id")

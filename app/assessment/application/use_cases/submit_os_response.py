@@ -4,20 +4,25 @@ from uuid import UUID
 
 from app.assessment.application.assemblers import OSResponseAssembler
 from app.assessment.application.exceptions import (
+    AttemptAlreadyCompletedError,
     ExerciseAttemptNotFoundError,
     InvalidExerciseTypeError,
 )
 from app.assessment.application.ports.repositories import (
     ExerciseAttemptRepository,
+    ExerciseScoreRepository,
     ExerciseRepository,
+    AssessmentAttemptRepository,
     OSAnswerRepository,
     OSQuestionRepository,
     OSResponseRepository,
     TemplateExerciseRepository,
 )
 from app.assessment.application.results import OSResponseResult
-from app.assessment.domain.enums import ExerciseType, ExerciseAttemptStatus
+from app.assessment.application.exercise_score_service import persist_exercise_score
+from app.assessment.domain.enums import AttemptStatus, ExerciseType, ExerciseAttemptStatus
 from app.assessment.domain.response import OSResponse
+from app.assessment.domain.technical_quality import valid_discrete_quality
 
 
 @dataclass
@@ -33,21 +38,29 @@ class SubmitOSResponseUseCase:
         exercise_attempt_repo: ExerciseAttemptRepository,
         template_exercise_repo: TemplateExerciseRepository,
         exercise_repo: ExerciseRepository,
+        assessment_attempt_repo: AssessmentAttemptRepository,
         os_response_repo: OSResponseRepository,
         os_question_repo: OSQuestionRepository,
         os_answer_repo: OSAnswerRepository,
+        exercise_score_repo: ExerciseScoreRepository,
     ) -> None:
         self._exercise_attempt_repo = exercise_attempt_repo
         self._template_exercise_repo = template_exercise_repo
         self._exercise_repo = exercise_repo
+        self._assessment_attempt_repo = assessment_attempt_repo
         self._os_response_repo = os_response_repo
         self._os_question_repo = os_question_repo
         self._os_answer_repo = os_answer_repo
+        self._exercise_score_repo = exercise_score_repo
 
     def execute(self, command: SubmitOSResponseCommand) -> OSResponseResult:
         ea = self._exercise_attempt_repo.find_by_id(command.exercise_attempt_id)
         if not ea:
             raise ExerciseAttemptNotFoundError()
+
+        attempt = self._assessment_attempt_repo.find_by_id(ea.assessment_attempt_id)
+        if attempt and attempt.status == AttemptStatus.COMPLETED:
+            raise AttemptAlreadyCompletedError("Completed attempts are immutable. Create a repeat attempt.")
 
         te = self._template_exercise_repo.find_by_id(ea.template_exercise_id)
         exercise = self._exercise_repo.find_by_id(te.exercise_id)
@@ -94,4 +107,13 @@ class SubmitOSResponseUseCase:
         ea.status = ExerciseAttemptStatus.ANSWERED
         ea.submitted_at = now
         self._exercise_attempt_repo.update(ea)
+        score = 100.0 if response.is_correct else 0.0
+        persist_exercise_score(
+            self._exercise_score_repo,
+            exercise_attempt_id=ea.id,
+            exercise_type=exercise.type,
+            score=score,
+            quality=valid_discrete_quality(score),
+            scoring_components={"is_correct": response.is_correct, "formula": "100_if_correct_else_0"},
+        )
         return OSResponseAssembler.to_result(response)

@@ -138,20 +138,21 @@ class GetStudentAssessmentHistoryUseCase:
 
     def _build_summary(self, scores, completed_at_list, items):
         completed_count = len(scores)
-        latest_score = scores[-1] if scores else None
-        latest_completed_at = completed_at_list[-1] if completed_at_list else None
+        # Repositories return attempts newest first.
+        latest_score = scores[0] if scores else None
+        latest_completed_at = completed_at_list[0] if completed_at_list else None
         average_score = sum(scores) / len(scores) if scores else None
         best_score = max(scores) if scores else None
         lowest_score = min(scores) if scores else None
 
         trend_percentage = None
         if len(scores) >= 2:
-            prev = scores[-2]
+            prev = scores[1]
             if prev > 0:
-                trend_percentage = round((scores[-1] - prev) / prev * 100, 2)
+                trend_percentage = round((scores[0] - prev) / prev * 100, 2)
 
         latest_intervention_level = None
-        for item in reversed(items):
+        for item in items:
             if item.intervention_level:
                 latest_intervention_level = item.intervention_level
                 break

@@ -2,8 +2,9 @@ from __future__ import annotations
 
 import json
 import uuid
+import base64
 from collections.abc import Generator
-from datetime import UTC, date, datetime, timezone
+from datetime import UTC, date, datetime, timedelta, timezone
 from uuid import UUID
 
 import pytest
@@ -58,6 +59,12 @@ engine = create_engine(
     future=True,
 )
 TestingSessionLocal = sessionmaker(bind=engine, autocommit=False, autoflush=False, future=True)
+
+# Real, decodable 1x1 PNG used by upload tests. Technical validation must not be
+# bypassed with arbitrary bytes labelled as image/png.
+VALID_PNG_BYTES = base64.b64decode(
+    "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII="
+)
 
 
 @pytest.fixture(autouse=True)
@@ -583,8 +590,11 @@ def test_upload_speaking_response(client, teacher_headers, classroom_id, student
             "fluency_score": 90.0,
             "completeness_score": 95.0,
             "prosody_score": None,
-            "comparison": None,
-            "review": {},
+            "comparison": {
+                "lexical_match_percentage": 100.0,
+                "source": "expected_text_vs_faster_whisper",
+            },
+            "review": {"required": False, "reasons": []},
             "error_message": None,
             "duration_ms": 1500,
             "raw_result_json": {"NBest": [{"PronScore": 85}]},
@@ -647,11 +657,39 @@ def test_upload_speaking_response(client, teacher_headers, classroom_id, student
     assert data["free_transcription_text"] == "hola mundo"
     assert data["assessment_recognized_text"] == "hola mundo"
     assert data["pronunciation_score"] == 85.0
+    assert data["technical_status"] == "VALID"
+    assert data["score_eligible"] is True
+    assert data["exercise_score"] is not None
     assert data["accuracy_score"] == 80.0
     assert data["fluency_score"] == 90.0
     assert data["completeness_score"] == 95.0
     assert data["prosody_score"] is None
     assert data["evaluation_status"] == "completed"
+    saved = client.get(
+        f"/api/v1/assessments/exercise-attempts/{ea_id}/speaking-response",
+        headers=teacher_headers,
+    ).json()
+    assert saved["comparison"] == data["comparison"]
+    assert saved["review"] == data["review"]
+    assert saved["exercise_score"] == data["exercise_score"] == 90.0
+
+    finished = client.post(
+        f"/api/v1/assessments/attempts/{att['attempt_id']}/finish",
+        headers=teacher_headers,
+    ).json()
+    reviewed = client.get(
+        f"/api/v1/assessments/attempts/{att['attempt_id']}/review",
+        headers=teacher_headers,
+    ).json()
+    assert finished["final_score"] == 90.0
+    assert finished["scoring_snapshot"][0]["score"] == 90.0
+    assert reviewed["exercise_reviews"][0]["score"] == 90.0
+    immutable_audio = client.post(
+        f"/api/v1/assessments/exercise-attempts/{ea_id}/speaking-response",
+        headers=teacher_headers,
+        files={"file": ("replacement.wav", b"replacement audio", "audio/wav")},
+    )
+    assert immutable_audio.status_code == 409
 
 
 def _create_speaking_setup(client, teacher_headers, classroom_id, student_id, exercise_type="READING_SPEAKING", expected_text="Hola mundo"):
@@ -796,6 +834,9 @@ def test_upload_speaking_response_whisper_fails_azure_works(client, teacher_head
     assert data["free_transcription_text"] is None
     assert data["assessment_recognized_text"] == "hola mundo"
     assert data["pronunciation_score"] == 85.0
+    assert data["technical_status"] == "PARTIAL"
+    assert data["score_eligible"] is False
+    assert data["exercise_score"] is not None
 
 
 def test_upload_speaking_response_azure_fails_whisper_works(client, teacher_headers, classroom_id, student_id, monkeypatch):
@@ -812,7 +853,10 @@ def test_upload_speaking_response_azure_fails_whisper_works(client, teacher_head
             "fluency_score": None,
             "completeness_score": None,
             "prosody_score": None,
-            "comparison": {"source": "expected_text_vs_faster_whisper"},
+            "comparison": {
+                "source": "expected_text_vs_faster_whisper",
+                "lexical_match_percentage": 100.0,
+            },
             "review": {"requires_review": True},
             "error_message": "One or more assessment providers failed.",
             "duration_ms": 1500,
@@ -837,6 +881,9 @@ def test_upload_speaking_response_azure_fails_whisper_works(client, teacher_head
     assert data["pronunciation_score"] is None
     assert data["comparison"] is not None
     assert data["review"] is not None
+    assert data["technical_status"] == "PARTIAL"
+    assert data["score_eligible"] is False
+    assert data["exercise_score"] == 100.0
 
 
 def test_upload_speaking_response_both_fail(client, teacher_headers, classroom_id, student_id, monkeypatch):
@@ -877,6 +924,19 @@ def test_upload_speaking_response_both_fail(client, teacher_headers, classroom_i
     assert data["free_transcription_text"] is None
     assert data["assessment_recognized_text"] is None
     assert data["pronunciation_score"] is None
+    assert data["technical_status"] == "INVALID"
+    assert data["score_eligible"] is False
+    assert data["exercise_score"] is None
+    with TestingSessionLocal() as db:
+        attempt_id = db.get(ExerciseAttemptModel, UUID(ea_id)).assessment_attempt_id
+    finish = client.post(
+        f"/api/v1/assessments/attempts/{attempt_id}/finish", headers=teacher_headers
+    )
+    assert finish.status_code == 409
+    result = client.get(
+        f"/api/v1/assessments/attempts/{attempt_id}/result", headers=teacher_headers
+    )
+    assert result.status_code == 404
 
 
 def test_upload_speaking_response_rejects_wrong_exercise_type(client, teacher_headers, classroom_id, student_id, monkeypatch):
@@ -2152,7 +2212,7 @@ def test_finish_mixed_assessment_mc_os_speaking(client, teacher_headers, classro
     assert 90 <= data["final_score"] <= 100
 
 
-def test_finish_with_pending_required_exercise_returns_404(client, teacher_headers, classroom_id, student_id):
+def test_finish_with_pending_required_exercise_returns_409(client, teacher_headers, classroom_id, student_id):
     tmpl_resp = client.post(
         "/api/v1/assessments/templates", headers=teacher_headers, json={"name": "TPEND", "version": 1}
     )
@@ -2194,7 +2254,8 @@ def test_finish_with_pending_required_exercise_returns_404(client, teacher_heade
         f"/api/v1/assessments/attempts/{att['attempt_id']}/finish",
         headers=teacher_headers,
     )
-    assert finish.status_code == 404
+    assert finish.status_code == 409
+    assert "not technically score-eligible" in finish.json()["detail"]
 
 
 def test_get_result_mixed_assessment_returns_correct_computed_fields(client, teacher_headers, classroom_id, student_id, monkeypatch):
@@ -2465,7 +2526,7 @@ def test_upload_mc_question_image(client, teacher_headers):
     response = client.post(
         f"/api/v1/assessments/exercises/{exercise_id}/mc-question/image",
         headers=teacher_headers,
-        files={"file": ("test.png", b"fake-png-content", "image/png")},
+        files={"file": ("test.png", VALID_PNG_BYTES, "image/png")},
     )
     assert response.status_code == 200
     data = response.json()
@@ -2474,7 +2535,7 @@ def test_upload_mc_question_image(client, teacher_headers):
     assert data["image_blob_path"] is not None
     assert "assessment-assets/exercises/" in data["image_blob_path"]
     assert data["content_type"] == "image/png"
-    assert data["size_bytes"] == len(b"fake-png-content")
+    assert data["size_bytes"] == len(VALID_PNG_BYTES)
 
 
 def test_upload_mc_question_image_wrong_exercise_type(client, teacher_headers):
@@ -2579,7 +2640,7 @@ def test_get_attempt_detail_returns_mc_image_blob_path_and_url(client, teacher_h
     client.post(
         f"/api/v1/assessments/exercises/{exercise_id}/mc-question/image",
         headers=teacher_headers,
-        files={"file": ("test.png", b"fake-png-content", "image/png")},
+        files={"file": ("test.png", VALID_PNG_BYTES, "image/png")},
     )
 
     detail = client.get(
@@ -2696,7 +2757,7 @@ def test_upload_writing_response_creates_response(client, teacher_headers, class
     resp = client.post(
         f"/api/v1/assessments/exercise-attempts/{ea_id}/writing-response",
         headers=teacher_headers,
-        files={"file": ("writing.png", b"fake-png-content", "image/png")},
+        files={"file": ("writing.png", VALID_PNG_BYTES, "image/png")},
         data={"payload_json": SAMPLE_PAYLOAD_JSON},
     )
     assert resp.status_code == 200
@@ -2716,24 +2777,26 @@ def test_upload_writing_response_creates_response(client, teacher_headers, class
     assert data["metrics"]["stroke_count"] == 2
 
 
-# 2. POST writing-response sets ExerciseAttempt.status = ANSWERED
-def test_upload_writing_response_sets_answered(client, teacher_headers, classroom_id, student_id):
+# 2. POST without OCR marks the sample technically invalid.
+def test_upload_writing_without_ocr_sets_technical_invalid(client, teacher_headers, classroom_id, student_id):
     attempt_id, ea_id = _create_writing_setup(client, teacher_headers, classroom_id, student_id)
 
     # Before upload, status should be PENDING
     detail = client.get(f"/api/v1/assessments/attempts/{attempt_id}", headers=teacher_headers).json()
     assert detail["exercise_attempts"][0]["status"] == "PENDING"
 
-    client.post(
+    response = client.post(
         f"/api/v1/assessments/exercise-attempts/{ea_id}/writing-response",
         headers=teacher_headers,
-        files={"file": ("writing.png", b"fake-png-content", "image/png")},
+        files={"file": ("writing.png", VALID_PNG_BYTES, "image/png")},
         data={"payload_json": SAMPLE_PAYLOAD_JSON},
     )
 
-    # After upload, status should be ANSWERED
+    assert response.json()["technical_status"] == "INVALID"
+    assert response.json()["score_eligible"] is False
+    assert response.json()["exercise_score"] is None
     detail = client.get(f"/api/v1/assessments/attempts/{attempt_id}", headers=teacher_headers).json()
-    assert detail["exercise_attempts"][0]["status"] == "ANSWERED"
+    assert detail["exercise_attempts"][0]["status"] == "FAILED"
 
 
 # 3. POST writing-response sets submitted_at
@@ -2743,7 +2806,7 @@ def test_upload_writing_response_sets_submitted_at(client, teacher_headers, clas
     resp = client.post(
         f"/api/v1/assessments/exercise-attempts/{ea_id}/writing-response",
         headers=teacher_headers,
-        files={"file": ("writing.png", b"fake-png-content", "image/png")},
+        files={"file": ("writing.png", VALID_PNG_BYTES, "image/png")},
         data={"payload_json": SAMPLE_PAYLOAD_JSON},
     )
     assert resp.status_code == 200
@@ -2763,7 +2826,7 @@ def test_upload_writing_response_saves_strokes(client, teacher_headers, classroo
     resp = client.post(
         f"/api/v1/assessments/exercise-attempts/{ea_id}/writing-response",
         headers=teacher_headers,
-        files={"file": ("writing.png", b"fake-png-content", "image/png")},
+        files={"file": ("writing.png", VALID_PNG_BYTES, "image/png")},
         data={"payload_json": SAMPLE_PAYLOAD_JSON},
     )
     data = resp.json()
@@ -2777,7 +2840,7 @@ def test_upload_writing_response_saves_metrics(client, teacher_headers, classroo
     resp = client.post(
         f"/api/v1/assessments/exercise-attempts/{ea_id}/writing-response",
         headers=teacher_headers,
-        files={"file": ("writing.png", b"fake-png-content", "image/png")},
+        files={"file": ("writing.png", VALID_PNG_BYTES, "image/png")},
         data={"payload_json": SAMPLE_PAYLOAD_JSON},
     )
     assert resp.status_code == 200
@@ -2797,7 +2860,7 @@ def test_get_writing_response_returns_data(client, teacher_headers, classroom_id
     client.post(
         f"/api/v1/assessments/exercise-attempts/{ea_id}/writing-response",
         headers=teacher_headers,
-        files={"file": ("writing.png", b"fake-png-content", "image/png")},
+        files={"file": ("writing.png", VALID_PNG_BYTES, "image/png")},
         data={"payload_json": SAMPLE_PAYLOAD_JSON},
     )
 
@@ -2857,26 +2920,24 @@ def test_writing_reattempt_overwrites_previous(client, teacher_headers, classroo
     assert data["metrics"]["stroke_count"] == 5
 
 
-# 9. Finish with writing answered does not leave PENDING
-def test_finish_with_writing_answered_not_pending(client, teacher_headers, classroom_id, student_id):
+# 9. A required writing sample without OCR cannot yield a definitive result.
+def test_finish_with_required_writing_without_ocr_is_not_evaluable(client, teacher_headers, classroom_id, student_id):
     attempt_id, ea_id = _create_writing_setup(client, teacher_headers, classroom_id, student_id)
 
     client.post(
         f"/api/v1/assessments/exercise-attempts/{ea_id}/writing-response",
         headers=teacher_headers,
-        files={"file": ("writing.png", b"fake-png-content", "image/png")},
+        files={"file": ("writing.png", VALID_PNG_BYTES, "image/png")},
         data={"payload_json": SAMPLE_PAYLOAD_JSON},
     )
 
     finish = client.post(f"/api/v1/assessments/attempts/{attempt_id}/finish", headers=teacher_headers)
-    assert finish.status_code == 200
-    data = finish.json()
-    assert data["writing_completed_count"] == 1
-    assert data["pending_exercises"] == 0
+    assert finish.status_code == 409
+    assert "not technically score-eligible" in finish.json()["detail"]
 
 
-# 10. Finish with writing without OCR does not lower final_score of MC/OS/Speaking
-def test_finish_mixed_with_writing_does_not_lower_score(client, teacher_headers, classroom_id, student_id, monkeypatch):
+# 10. A required invalid sample blocks the definitive result.
+def test_finish_mixed_with_required_invalid_writing_is_not_evaluable(client, teacher_headers, classroom_id, student_id, monkeypatch):
     from app.assessment.application.use_cases.assess_reading_pipeline import AssessReadingPipelineUseCase
 
     async def mock_execute(self, command):
@@ -3018,24 +3079,14 @@ def test_finish_mixed_with_writing_does_not_lower_score(client, teacher_headers,
     client.post(
         f"/api/v1/assessments/exercise-attempts/{wr_ea_id}/writing-response",
         headers=teacher_headers,
-        files={"file": ("writing.png", b"fake-png-content", "image/png")},
+        files={"file": ("writing.png", VALID_PNG_BYTES, "image/png")},
         data={"payload_json": SAMPLE_PAYLOAD_JSON},
     )
 
     # Finish
     finish = client.post(f"/api/v1/assessments/attempts/{attempt_id}/finish", headers=teacher_headers)
-    assert finish.status_code == 200
-    data = finish.json()
-    # MC=100, OS=100, Speaking=100 -> avg = 100
-    # Writing should NOT be in denominator
-    assert data["final_score"] == 100.0
-    assert data["writing_completed_count"] == 1
-    assert data["mc_correct_count"] == 1
-    assert data["os_correct_count"] == 1
-    assert data["speaking_completed_count"] == 1
-    assert data["total_exercises"] == 4
-    assert data["evaluated_exercises"] == 4
-    assert data["pending_exercises"] == 0
+    assert finish.status_code == 409
+    assert "not technically score-eligible" in finish.json()["detail"]
 
 
 # 11. Upload writing on non-writing exercise returns 400
@@ -3084,7 +3135,7 @@ def test_upload_writing_wrong_exercise_type_returns_400(client, teacher_headers,
     resp = client.post(
         f"/api/v1/assessments/exercise-attempts/{ea_id}/writing-response",
         headers=teacher_headers,
-        files={"file": ("writing.png", b"fake-png-content", "image/png")},
+        files={"file": ("writing.png", VALID_PNG_BYTES, "image/png")},
         data={"payload_json": SAMPLE_PAYLOAD_JSON},
     )
     assert resp.status_code == 400
@@ -3112,7 +3163,7 @@ def test_upload_writing_invalid_payload_json_returns_400(client, teacher_headers
     resp = client.post(
         f"/api/v1/assessments/exercise-attempts/{ea_id}/writing-response",
         headers=teacher_headers,
-        files={"file": ("writing.png", b"fake-png-content", "image/png")},
+        files={"file": ("writing.png", VALID_PNG_BYTES, "image/png")},
         data={"payload_json": "not-valid-json"},
     )
     assert resp.status_code == 400
@@ -3126,33 +3177,26 @@ def test_upload_writing_listening_writing_is_accepted(client, teacher_headers, c
     resp = client.post(
         f"/api/v1/assessments/exercise-attempts/{ea_id}/writing-response",
         headers=teacher_headers,
-        files={"file": ("writing.png", b"fake-png-content", "image/png")},
+        files={"file": ("writing.png", VALID_PNG_BYTES, "image/png")},
         data={"payload_json": SAMPLE_PAYLOAD_JSON},
     )
     assert resp.status_code == 200
 
 
-# 15. Finish all writing exercises (no scored exercises) returns None score
-def test_finish_all_writing_returns_null_score(client, teacher_headers, classroom_id, student_id):
+# 15. A required attempt with no eligible score is not evaluable.
+def test_finish_all_writing_without_eligible_score_is_not_evaluable(client, teacher_headers, classroom_id, student_id):
     attempt_id, ea_id = _create_writing_setup(client, teacher_headers, classroom_id, student_id)
 
     client.post(
         f"/api/v1/assessments/exercise-attempts/{ea_id}/writing-response",
         headers=teacher_headers,
-        files={"file": ("writing.png", b"fake-png-content", "image/png")},
+        files={"file": ("writing.png", VALID_PNG_BYTES, "image/png")},
         data={"payload_json": SAMPLE_PAYLOAD_JSON},
     )
 
     finish = client.post(f"/api/v1/assessments/attempts/{attempt_id}/finish", headers=teacher_headers)
-    assert finish.status_code == 200
-    data = finish.json()
-    assert data["final_score"] is None
-    assert data["max_score"] is None
-    assert data["writing_completed_count"] == 1
-    assert data["total_exercises"] == 1
-    assert data["evaluated_exercises"] == 1
-    assert data["pending_exercises"] == 0
-    assert data["intervention_level"] is None, "intervention_level should be null when no scored exercises"
+    assert finish.status_code == 409
+    assert "not technically score-eligible" in finish.json()["detail"]
 
 
 # 16. WebP image is accepted
@@ -3176,7 +3220,7 @@ def test_upload_writing_without_metrics_still_succeeds(client, teacher_headers, 
     resp = client.post(
         f"/api/v1/assessments/exercise-attempts/{ea_id}/writing-response",
         headers=teacher_headers,
-        files={"file": ("writing.png", b"fake-png-content", "image/png")},
+        files={"file": ("writing.png", VALID_PNG_BYTES, "image/png")},
         data={"payload_json": minimal_payload},
     )
     assert resp.status_code == 200
@@ -3201,7 +3245,7 @@ def test_upload_writing_with_ocr_sets_recognized_text(client, teacher_headers, c
         resp = client.post(
             f"/api/v1/assessments/exercise-attempts/{ea_id}/writing-response",
             headers=teacher_headers,
-            files={"file": ("writing.png", b"fake-png-content", "image/png")},
+            files={"file": ("writing.png", VALID_PNG_BYTES, "image/png")},
             data={"payload_json": SAMPLE_PAYLOAD_JSON},
         )
         assert resp.status_code == 200
@@ -3233,7 +3277,7 @@ def test_upload_writing_with_ocr_sets_evaluated(client, teacher_headers, classro
         client.post(
             f"/api/v1/assessments/exercise-attempts/{ea_id}/writing-response",
             headers=teacher_headers,
-            files={"file": ("writing.png", b"fake-png-content", "image/png")},
+            files={"file": ("writing.png", VALID_PNG_BYTES, "image/png")},
             data={"payload_json": SAMPLE_PAYLOAD_JSON},
         )
 
@@ -3243,7 +3287,7 @@ def test_upload_writing_with_ocr_sets_evaluated(client, teacher_headers, classro
         get_settings.cache_clear()
 
 
-def test_upload_writing_with_ocr_failure_falls_back_to_answered(client, teacher_headers, classroom_id, student_id, monkeypatch):
+def test_upload_writing_with_ocr_failure_is_technical_invalid(client, teacher_headers, classroom_id, student_id, monkeypatch):
     from app.assessment.infrastructure.adapters.azure_vision_ocr import AzureVisionOcrAdapter
     from app.assessment.application.ports.ocr_service import OcrResult
     from app.core.config import get_settings
@@ -3262,21 +3306,24 @@ def test_upload_writing_with_ocr_failure_falls_back_to_answered(client, teacher_
         resp = client.post(
             f"/api/v1/assessments/exercise-attempts/{ea_id}/writing-response",
             headers=teacher_headers,
-            files={"file": ("writing.png", b"fake-png-content", "image/png")},
+            files={"file": ("writing.png", VALID_PNG_BYTES, "image/png")},
             data={"payload_json": SAMPLE_PAYLOAD_JSON},
         )
         assert resp.status_code == 200
         data = resp.json()
         # recognized_text should be None (OCR failed)
         assert data["recognized_text"] is None
+        assert data["technical_status"] == "INVALID"
+        assert data["score_eligible"] is False
+        assert data["exercise_score"] is None
 
         detail = client.get(f"/api/v1/assessments/attempts/{attempt_id}", headers=teacher_headers).json()
-        assert detail["exercise_attempts"][0]["status"] == "ANSWERED"
+        assert detail["exercise_attempts"][0]["status"] == "FAILED"
     finally:
         get_settings.cache_clear()
 
 
-def test_upload_writing_with_ocr_empty_text_falls_back_to_answered(client, teacher_headers, classroom_id, student_id, monkeypatch):
+def test_upload_writing_with_ocr_empty_text_is_technical_invalid(client, teacher_headers, classroom_id, student_id, monkeypatch):
     from app.assessment.infrastructure.adapters.azure_vision_ocr import AzureVisionOcrAdapter
     from app.assessment.application.ports.ocr_service import OcrResult
     from app.core.config import get_settings
@@ -3295,13 +3342,15 @@ def test_upload_writing_with_ocr_empty_text_falls_back_to_answered(client, teach
         resp = client.post(
             f"/api/v1/assessments/exercise-attempts/{ea_id}/writing-response",
             headers=teacher_headers,
-            files={"file": ("writing.png", b"fake-png-content", "image/png")},
+            files={"file": ("writing.png", VALID_PNG_BYTES, "image/png")},
             data={"payload_json": SAMPLE_PAYLOAD_JSON},
         )
         assert resp.status_code == 200
+        assert resp.json()["technical_status"] == "INVALID"
+        assert resp.json()["score_eligible"] is False
 
         detail = client.get(f"/api/v1/assessments/attempts/{attempt_id}", headers=teacher_headers).json()
-        assert detail["exercise_attempts"][0]["status"] == "ANSWERED"
+        assert detail["exercise_attempts"][0]["status"] == "FAILED"
     finally:
         get_settings.cache_clear()
 
@@ -3513,7 +3562,7 @@ def test_upload_writing_with_ocr_saves_comparison_metrics(client, teacher_header
         resp = client.post(
             f"/api/v1/assessments/exercise-attempts/{ea_id}/writing-response",
             headers=teacher_headers,
-            files={"file": ("writing.png", b"fake-png-content", "image/png")},
+            files={"file": ("writing.png", VALID_PNG_BYTES, "image/png")},
             data={"payload_json": SAMPLE_PAYLOAD_JSON},
         )
         assert resp.status_code == 200
@@ -3546,7 +3595,7 @@ def test_get_writing_response_returns_comparison_fields(client, teacher_headers,
         client.post(
             f"/api/v1/assessments/exercise-attempts/{ea_id}/writing-response",
             headers=teacher_headers,
-            files={"file": ("writing.png", b"fake-png-content", "image/png")},
+            files={"file": ("writing.png", VALID_PNG_BYTES, "image/png")},
             data={"payload_json": SAMPLE_PAYLOAD_JSON},
         )
 
@@ -3590,7 +3639,7 @@ def test_finish_writing_only_with_similarity_scores_result(client, teacher_heade
         client.post(
             f"/api/v1/assessments/exercise-attempts/{ea_id}/writing-response",
             headers=teacher_headers,
-            files={"file": ("writing.png", b"fake-png-content", "image/png")},
+            files={"file": ("writing.png", VALID_PNG_BYTES, "image/png")},
             data={"payload_json": SAMPLE_PAYLOAD_JSON},
         )
 
@@ -3606,29 +3655,30 @@ def test_finish_writing_only_with_similarity_scores_result(client, teacher_heade
         assert data["total_exercises"] == 1
         assert data["evaluated_exercises"] == 1
         assert data["pending_exercises"] == 0
+        immutable_image = client.post(
+            f"/api/v1/assessments/exercise-attempts/{ea_id}/writing-response",
+            headers=teacher_headers,
+            files={"file": ("replacement.png", VALID_PNG_BYTES, "image/png")},
+            data={"payload_json": SAMPLE_PAYLOAD_JSON},
+        )
+        assert immutable_image.status_code == 409
     finally:
         get_settings.cache_clear()
 
 
-def test_finish_writing_only_without_similarity_score_null_result(client, teacher_headers, classroom_id, student_id):
+def test_finish_writing_only_without_similarity_is_not_evaluable(client, teacher_headers, classroom_id, student_id):
     attempt_id, ea_id = _create_writing_setup(client, teacher_headers, classroom_id, student_id)
 
     client.post(
         f"/api/v1/assessments/exercise-attempts/{ea_id}/writing-response",
         headers=teacher_headers,
-        files={"file": ("writing.png", b"fake-png-content", "image/png")},
+        files={"file": ("writing.png", VALID_PNG_BYTES, "image/png")},
         data={"payload_json": SAMPLE_PAYLOAD_JSON},
     )
 
     finish = client.post(f"/api/v1/assessments/attempts/{attempt_id}/finish", headers=teacher_headers)
-    assert finish.status_code == 200
-    data = finish.json()
-    assert data["final_score"] is None
-    assert data["max_score"] is None
-    assert data["writing_completed_count"] == 1
-    assert data["writing_average_score"] is None
-    assert data["writing_review_required_count"] == 0
-    assert data["intervention_level"] is None
+    assert finish.status_code == 409
+    assert "not technically score-eligible" in finish.json()["detail"]
 
 
 def test_finish_writing_with_review_sets_medium_intervention(client, teacher_headers, classroom_id, student_id, monkeypatch):
@@ -3649,7 +3699,7 @@ def test_finish_writing_with_review_sets_medium_intervention(client, teacher_hea
         client.post(
             f"/api/v1/assessments/exercise-attempts/{ea_id}/writing-response",
             headers=teacher_headers,
-            files={"file": ("writing.png", b"fake-png-content", "image/png")},
+            files={"file": ("writing.png", VALID_PNG_BYTES, "image/png")},
             data={"payload_json": SAMPLE_PAYLOAD_JSON},
         )
 
@@ -3813,7 +3863,7 @@ def test_finish_mixed_with_writing_enters_average(client, teacher_headers, class
         client.post(
             f"/api/v1/assessments/exercise-attempts/{wr_ea_id}/writing-response",
             headers=teacher_headers,
-            files={"file": ("writing.png", b"fake-png-content", "image/png")},
+            files={"file": ("writing.png", VALID_PNG_BYTES, "image/png")},
             data={"payload_json": SAMPLE_PAYLOAD_JSON},
         )
 
@@ -3823,7 +3873,8 @@ def test_finish_mixed_with_writing_enters_average(client, teacher_headers, class
         # MC=100, OS=100, Speaking=100, Writing=86.35
         # avg = (100+100+100+86.35) / 4 = 386.35 / 4 = 96.59 (rounded)
         assert data["final_score"] == 96.59
-        assert data["max_score"] == 400.0
+        assert data["max_score"] == 100.0
+        assert data["score_denominator"] == 4
         assert data["writing_average_score"] == 86.35
         assert data["writing_completed_count"] == 1
         assert data["writing_review_required_count"] == 0
@@ -4131,7 +4182,7 @@ def test_get_result_returns_writing_fields(client, teacher_headers, classroom_id
         client.post(
             f"/api/v1/assessments/exercise-attempts/{ea_id}/writing-response",
             headers=teacher_headers,
-            files={"file": ("writing.png", b"fake-png-content", "image/png")},
+            files={"file": ("writing.png", VALID_PNG_BYTES, "image/png")},
             data={"payload_json": SAMPLE_PAYLOAD_JSON},
         )
 
@@ -4516,6 +4567,344 @@ def test_get_result_returns_exercise_summaries(client, teacher_headers, classroo
     s = data["exercise_summaries"][0]
     assert s["exercise_attempt_id"] == ea_id
     assert s["score"] == 100.0
+
+
+# ─── Phase 1 technical-integrity matrix ───────────────────────
+
+
+def _create_single_mc_attempt(client, teacher_headers, classroom_id, student_id, *, name="P1-MC"):
+    template = client.post(
+        "/api/v1/assessments/templates",
+        headers=teacher_headers,
+        json={"name": name, "version": 1},
+    ).json()
+    exercise = client.post(
+        "/api/v1/assessments/exercises",
+        headers=teacher_headers,
+        json={
+            "type": "MULTIPLE_CHOICE",
+            "title": name,
+            "mc_question": {
+                "question_text": "Q?",
+                "options": [{"text": "Correcta", "is_correct": True, "order_index": 1}],
+            },
+        },
+    ).json()
+    client.post(
+        f"/api/v1/assessments/templates/{template['template_id']}/exercises",
+        headers=teacher_headers,
+        json={
+            "exercise_id": exercise["exercise_id"],
+            "order_index": 1,
+            "points": 10,
+            "is_required": True,
+        },
+    )
+    assessment = client.post(
+        "/api/v1/assessments",
+        headers=teacher_headers,
+        json={"template_id": template["template_id"], "classroom_id": str(classroom_id)},
+    ).json()
+    attempt = client.post(
+        f"/api/v1/assessments/{assessment['assessment_id']}/attempts",
+        headers=teacher_headers,
+        json={"student_id": str(student_id)},
+    ).json()
+    detail = client.get(
+        f"/api/v1/assessments/attempts/{attempt['attempt_id']}", headers=teacher_headers
+    ).json()
+    with TestingSessionLocal() as db:
+        question = db.query(MCQuestionModel).filter_by(exercise_id=UUID(exercise["exercise_id"])).one()
+        option = db.query(MCAnswerOptionModel).filter_by(mc_question_id=question.id).one()
+        option_id = option.id
+    return assessment["assessment_id"], attempt["attempt_id"], detail["exercise_attempts"][0]["exercise_attempt_id"], option_id
+
+
+def test_phase1_completed_attempt_response_is_immutable(client, teacher_headers, classroom_id, student_id):
+    _, attempt_id, exercise_attempt_id, option_id = _create_single_mc_attempt(
+        client, teacher_headers, classroom_id, student_id, name="P1 immutable"
+    )
+    submitted = client.post(
+        f"/api/v1/assessments/exercise-attempts/{exercise_attempt_id}/mc-response",
+        headers=teacher_headers,
+        json={"selected_option_id": str(option_id)},
+    )
+    assert submitted.status_code == 200
+    assert client.post(
+        f"/api/v1/assessments/attempts/{attempt_id}/finish", headers=teacher_headers
+    ).status_code == 200
+
+    mutation = client.post(
+        f"/api/v1/assessments/exercise-attempts/{exercise_attempt_id}/mc-response",
+        headers=teacher_headers,
+        json={"selected_option_id": str(option_id)},
+    )
+    assert mutation.status_code == 409
+
+
+def test_phase1_mc_option_must_belong_to_current_question(client, teacher_headers, classroom_id, student_id):
+    template = client.post(
+        "/api/v1/assessments/templates", headers=teacher_headers, json={"name": "P1 ownership", "version": 1}
+    ).json()
+    exercises = []
+    for index in (1, 2):
+        exercise = client.post(
+            "/api/v1/assessments/exercises",
+            headers=teacher_headers,
+            json={
+                "type": "MULTIPLE_CHOICE",
+                "title": f"Pregunta {index}",
+                "mc_question": {
+                    "question_text": f"Q{index}?",
+                    "options": [{"text": f"A{index}", "is_correct": True, "order_index": 1}],
+                },
+            },
+        ).json()
+        exercises.append(exercise)
+        client.post(
+            f"/api/v1/assessments/templates/{template['template_id']}/exercises",
+            headers=teacher_headers,
+            json={
+                "exercise_id": exercise["exercise_id"],
+                "order_index": index,
+                "points": 10,
+                "is_required": True,
+            },
+        )
+    assessment = client.post(
+        "/api/v1/assessments",
+        headers=teacher_headers,
+        json={"template_id": template["template_id"], "classroom_id": str(classroom_id)},
+    ).json()
+    attempt = client.post(
+        f"/api/v1/assessments/{assessment['assessment_id']}/attempts",
+        headers=teacher_headers,
+        json={"student_id": str(student_id)},
+    ).json()
+    detail = client.get(
+        f"/api/v1/assessments/attempts/{attempt['attempt_id']}", headers=teacher_headers
+    ).json()
+    with TestingSessionLocal() as db:
+        second_question = db.query(MCQuestionModel).filter_by(
+            exercise_id=UUID(exercises[1]["exercise_id"])
+        ).one()
+        foreign_option = db.query(MCAnswerOptionModel).filter_by(
+            mc_question_id=second_question.id
+        ).one()
+        foreign_option_id = foreign_option.id
+
+    response = client.post(
+        f"/api/v1/assessments/exercise-attempts/{detail['exercise_attempts'][0]['exercise_attempt_id']}/mc-response",
+        headers=teacher_headers,
+        json={"selected_option_id": str(foreign_option_id)},
+    )
+    assert response.status_code == 400
+    assert "does not belong" in response.json()["detail"]
+
+
+def test_phase1_optional_invalid_is_excluded_with_snapshot(client, teacher_headers, classroom_id, student_id):
+    template = client.post(
+        "/api/v1/assessments/templates", headers=teacher_headers, json={"name": "P1 optional", "version": 1}
+    ).json()
+    mc = client.post(
+        "/api/v1/assessments/exercises",
+        headers=teacher_headers,
+        json={
+            "type": "MULTIPLE_CHOICE",
+            "title": "MC required",
+            "mc_question": {
+                "question_text": "Q?",
+                "options": [{"text": "A", "is_correct": True, "order_index": 1}],
+            },
+        },
+    ).json()
+    writing = client.post(
+        "/api/v1/assessments/exercises",
+        headers=teacher_headers,
+        json={
+            "type": "READING_WRITING",
+            "title": "Writing optional",
+            "prompt_exercise": {
+                "text_to_show": "El gato",
+                "expected_text": "El gato",
+                "language_code": "es-PE",
+            },
+        },
+    ).json()
+    for exercise, index, required in ((mc, 1, True), (writing, 2, False)):
+        client.post(
+            f"/api/v1/assessments/templates/{template['template_id']}/exercises",
+            headers=teacher_headers,
+            json={
+                "exercise_id": exercise["exercise_id"],
+                "order_index": index,
+                "points": 10,
+                "is_required": required,
+            },
+        )
+    assessment = client.post(
+        "/api/v1/assessments",
+        headers=teacher_headers,
+        json={"template_id": template["template_id"], "classroom_id": str(classroom_id)},
+    ).json()
+    attempt = client.post(
+        f"/api/v1/assessments/{assessment['assessment_id']}/attempts",
+        headers=teacher_headers,
+        json={"student_id": str(student_id)},
+    ).json()
+    detail = client.get(
+        f"/api/v1/assessments/attempts/{attempt['attempt_id']}", headers=teacher_headers
+    ).json()
+    with TestingSessionLocal() as db:
+        question = db.query(MCQuestionModel).filter_by(exercise_id=UUID(mc["exercise_id"])).one()
+        option = db.query(MCAnswerOptionModel).filter_by(mc_question_id=question.id).one()
+        option_id = option.id
+    client.post(
+        f"/api/v1/assessments/exercise-attempts/{detail['exercise_attempts'][0]['exercise_attempt_id']}/mc-response",
+        headers=teacher_headers,
+        json={"selected_option_id": str(option_id)},
+    )
+    invalid = client.post(
+        f"/api/v1/assessments/exercise-attempts/{detail['exercise_attempts'][1]['exercise_attempt_id']}/writing-response",
+        headers=teacher_headers,
+        files={"file": ("invalid.png", b"not-an-image", "image/png")},
+    ).json()
+    assert invalid["technical_status"] == "INVALID"
+    assert invalid["score_eligible"] is False
+
+    finished = client.post(
+        f"/api/v1/assessments/attempts/{attempt['attempt_id']}/finish", headers=teacher_headers
+    )
+    assert finished.status_code == 200
+    payload = finished.json()
+    assert payload["final_score"] == 100.0
+    assert payload["intervention_level"] == "LOW"
+    assert payload["score_denominator"] == 1
+    excluded = next(row for row in payload["scoring_snapshot"] if not row["included"])
+    assert excluded["technical_status"] == "INVALID"
+    assert excluded["exclusion_reason"] == "NOT_SCORE_ELIGIBLE"
+
+
+def test_phase1_history_latest_and_trend_use_newest_date(client, teacher_headers, classroom_id, student_id):
+    template = client.post(
+        "/api/v1/assessments/templates", headers=teacher_headers, json={"name": "P1 history", "version": 1}
+    ).json()
+    assessment = client.post(
+        "/api/v1/assessments",
+        headers=teacher_headers,
+        json={"template_id": template["template_id"], "classroom_id": str(classroom_id)},
+    ).json()
+    older = datetime(2026, 1, 10, 10, 0, tzinfo=timezone.utc)
+    newer = older + timedelta(days=20)
+    with TestingSessionLocal() as db:
+        old_attempt = AssessmentAttemptModel(
+            assessment_id=UUID(assessment["assessment_id"]),
+            student_id=student_id,
+            status="COMPLETED",
+            started_at=older,
+            completed_at=older,
+        )
+        new_attempt = AssessmentAttemptModel(
+            assessment_id=UUID(assessment["assessment_id"]),
+            student_id=student_id,
+            status="COMPLETED",
+            started_at=newer,
+            completed_at=newer,
+        )
+        db.add_all([old_attempt, new_attempt])
+        db.flush()
+        db.add_all(
+            [
+                AssessmentResultModel(
+                    assessment_attempt_id=old_attempt.id,
+                    final_score=60.0,
+                    max_score=100.0,
+                    intervention_level="MEDIUM",
+                    generated_at=older,
+                ),
+                AssessmentResultModel(
+                    assessment_attempt_id=new_attempt.id,
+                    final_score=90.0,
+                    max_score=100.0,
+                    intervention_level="LOW",
+                    generated_at=newer,
+                ),
+            ]
+        )
+        db.commit()
+
+    history = client.get(
+        f"/api/v1/assessments/students/{student_id}/history", headers=teacher_headers
+    ).json()
+    assert history["summary"]["latest_score"] == 90.0
+    assert history["summary"]["trend_percentage"] == 50.0
+    assert history["summary"]["latest_intervention_level"] == "LOW"
+    assert history["items"][0]["final_score"] == 90.0
+
+
+def test_phase1_ocr_low_confidence_is_partial_not_low_performance(
+    client, teacher_headers, classroom_id, student_id, monkeypatch
+):
+    from app.assessment.application.ports.ocr_service import OcrResult
+    from app.assessment.infrastructure.adapters.azure_vision_ocr import AzureVisionOcrAdapter
+    from app.core.config import get_settings
+
+    monkeypatch.setattr(
+        AzureVisionOcrAdapter,
+        "extract_text",
+        lambda self, image_data: OcrResult(
+            full_text="El gato duerme.", confidence_avg=0.50, raw_response={"blocks": []}
+        ),
+    )
+    monkeypatch.setenv("AZURE_VISION_ENDPOINT", "https://fake.endpoint")
+    monkeypatch.setenv("AZURE_VISION_KEY", "fake-key")
+    get_settings.cache_clear()
+    try:
+        attempt_id, exercise_attempt_id = _create_writing_setup(
+            client, teacher_headers, classroom_id, student_id
+        )
+        response = client.post(
+            f"/api/v1/assessments/exercise-attempts/{exercise_attempt_id}/writing-response",
+            headers=teacher_headers,
+            files={"file": ("writing.png", VALID_PNG_BYTES, "image/png")},
+            data={"payload_json": SAMPLE_PAYLOAD_JSON},
+        )
+        assert response.status_code == 200
+        data = response.json()
+        assert data["exercise_score"] == 100.0
+        assert data["technical_status"] == "PARTIAL"
+        assert data["score_eligible"] is False
+        assert "LOW_OCR_CONFIDENCE" in data["quality_reasons"]
+        assert client.post(
+            f"/api/v1/assessments/attempts/{attempt_id}/finish", headers=teacher_headers
+        ).status_code == 409
+    finally:
+        get_settings.cache_clear()
+
+
+def test_phase1_audio_decode_error_is_technical_invalid(
+    client, teacher_headers, classroom_id, student_id, monkeypatch
+):
+    from app.assessment.application.use_cases.assess_reading_pipeline import AssessReadingPipelineUseCase
+
+    async def fail_decode(self, command):
+        raise ValueError("invalid audio container")
+
+    monkeypatch.setattr(AssessReadingPipelineUseCase, "execute", fail_decode)
+    exercise_attempt_id = _create_speaking_setup(
+        client, teacher_headers, classroom_id, student_id
+    )
+    response = client.post(
+        f"/api/v1/assessments/exercise-attempts/{exercise_attempt_id}/speaking-response",
+        headers=teacher_headers,
+        files={"file": ("broken.wav", b"not-audio", "audio/wav")},
+    )
+    assert response.status_code == 200
+    data = response.json()
+    assert data["exercise_score"] is None
+    assert data["technical_status"] == "INVALID"
+    assert data["score_eligible"] is False
+    assert "INVALID_AUDIO" in data["quality_reasons"]
 
 
 def test_result_and_finish_exercise_summaries_consistent(client, teacher_headers, classroom_id, student_id, monkeypatch):

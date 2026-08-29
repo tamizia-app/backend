@@ -12,10 +12,9 @@ from sqlalchemy.pool import StaticPool
 from app.core.security import hash_password
 from app.shared.base import Base
 from app.db.session import get_db
-from app.iam.domain.enums import UserRole
 from app.main import app
-from app.models.teacher_profile import TeacherProfile
-from app.models.user import User
+from app.iam.infrastructure.models.user_model import UserModel
+from app.school.infrastructure.models.homeroom_teacher_model import HomeroomTeacherModel
 
 
 SQLALCHEMY_DATABASE_URL = "sqlite+pysqlite:///:memory:"
@@ -34,24 +33,26 @@ def setup_database(tmp_path: Path) -> Generator[None, None, None]:
     Base.metadata.create_all(bind=engine)
 
     with TestingSessionLocal() as db:
-        teacher = User(
+        teacher = UserModel(
+            name="Teacher",
+            lastname="One",
             email="teacher@example.com",
             password_hash=hash_password("secret123"),
-            full_name="Teacher One",
-            role=UserRole.TEACHER,
+            is_active=True,
         )
-        other_teacher = User(
+        other_teacher = UserModel(
+            name="Teacher",
+            lastname="Two",
             email="other@example.com",
             password_hash=hash_password("secret123"),
-            full_name="Teacher Two",
-            role=UserRole.TEACHER,
+            is_active=True,
         )
         db.add_all([teacher, other_teacher])
         db.flush()
         db.add_all(
             [
-                TeacherProfile(user_id=teacher.id, institution_name="Colegio Demo"),
-                TeacherProfile(user_id=other_teacher.id, institution_name="Colegio Demo"),
+                HomeroomTeacherModel(user_id=teacher.id, institute_name="Colegio Demo"),
+                HomeroomTeacherModel(user_id=other_teacher.id, institute_name="Colegio Demo"),
             ]
         )
         db.commit()

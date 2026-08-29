@@ -174,4 +174,6 @@ class FinalResultAssembler:
             pending_exercises=r.pending_exercises,
             writing_average_score=r.writing_average_score,
             writing_review_required_count=r.writing_review_required_count,
+            score_denominator=r.score_denominator,
+            scoring_snapshot=r.scoring_snapshot_json,
         )

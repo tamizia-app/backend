@@ -2,7 +2,22 @@ from dataclasses import dataclass
 from datetime import datetime
 from uuid import UUID
 
-from app.assessment.domain.enums import InterventionLevel
+from app.assessment.domain.enums import ExerciseType, InterventionLevel, TechnicalStatus
+
+
+@dataclass
+class ExerciseScore:
+    id: UUID
+    exercise_attempt_id: UUID
+    exercise_type: ExerciseType
+    score: float | None
+    score_eligible: bool
+    technical_status: TechnicalStatus
+    manual_review_required: bool
+    quality_reasons: list[str]
+    scoring_components: dict
+    created_at: datetime
+    updated_at: datetime
 
 
 @dataclass
@@ -18,6 +33,9 @@ class SpeakingMetrics:
     created_at: datetime
     updated_at: datetime
     raw_transcription_result_json: dict | None = None
+    comparison_json: dict | None = None
+    review_json: dict | None = None
+    quality_json: dict | None = None
 
 
 @dataclass
@@ -44,6 +62,8 @@ class WritingMetrics:
     pressure_avg: float | None = None
     bounding_box_json: dict | None = None
     writing_area_usage: float | None = None
+    review_json: dict | None = None
+    quality_json: dict | None = None
 
 
 @dataclass
@@ -67,3 +87,5 @@ class AssessmentResult:
     pending_exercises: int = 0
     writing_average_score: float | None = None
     writing_review_required_count: int = 0
+    score_denominator: int = 0
+    scoring_snapshot_json: list[dict] | None = None

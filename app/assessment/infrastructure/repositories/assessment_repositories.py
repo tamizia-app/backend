@@ -9,6 +9,7 @@ from app.assessment.application.ports.repositories import (
     AssessmentRepository,
     AssessmentResultRepository,
     ExerciseAttemptRepository,
+    ExerciseScoreRepository,
     ExerciseRepository,
     ExpectedAnswerRepository,
     MCAnswerOptionRepository,
@@ -33,10 +34,11 @@ from app.assessment.domain.enums import (
     ExerciseAttemptStatus,
     ExerciseType,
     InterventionLevel,
+    TechnicalStatus,
 )
 from app.assessment.domain.exercise import AssessmentExercise
 from app.assessment.domain.metrics import AssessmentResult as AssessmentResultDomain
-from app.assessment.domain.metrics import SpeakingMetrics, WritingMetrics
+from app.assessment.domain.metrics import ExerciseScore, SpeakingMetrics, WritingMetrics
 from app.assessment.domain.prompt import ExpectedAnswer, PromptExercise
 from app.assessment.domain.question import MCAnswerOption, MCQuestion, OSAnswer, OSQuestion
 from app.assessment.domain.response import MCResponse, OSResponse, SpeakingResponse, WritingResponse
@@ -49,6 +51,7 @@ from app.assessment.infrastructure.models.attempt_model import (
 from app.assessment.infrastructure.models.exercise_model import AssessmentExerciseModel
 from app.assessment.infrastructure.models.metrics_model import (
     AssessmentResultModel,
+    ExerciseScoreModel,
     SpeakingMetricsModel,
     WritingMetricsModel,
 )
@@ -870,6 +873,9 @@ class SQLAlchemySpeakingMetricsRepository(SpeakingMetricsRepository):
             prosody_score=m.prosody_score,
             raw_speech_result_json=m.raw_speech_result_json,
             raw_transcription_result_json=m.raw_transcription_result_json,
+            comparison_json=m.comparison_json,
+            review_json=m.review_json,
+            quality_json=m.quality_json,
         )
         self._db.add(model)
         self._db.flush()
@@ -893,6 +899,9 @@ class SQLAlchemySpeakingMetricsRepository(SpeakingMetricsRepository):
             prosody_score=model.prosody_score,
             raw_speech_result_json=model.raw_speech_result_json,
             raw_transcription_result_json=model.raw_transcription_result_json,
+            comparison_json=model.comparison_json,
+            review_json=model.review_json,
+            quality_json=model.quality_json,
             created_at=model.created_at,
             updated_at=model.updated_at,
         )
@@ -907,6 +916,9 @@ class SQLAlchemySpeakingMetricsRepository(SpeakingMetricsRepository):
             model.prosody_score = m.prosody_score
             model.raw_speech_result_json = m.raw_speech_result_json
             model.raw_transcription_result_json = m.raw_transcription_result_json
+            model.comparison_json = m.comparison_json
+            model.review_json = m.review_json
+            model.quality_json = m.quality_json
             self._db.flush()
         return m
 
@@ -936,6 +948,8 @@ class SQLAlchemyWritingMetricsRepository(WritingMetricsRepository):
             pressure_avg=m.pressure_avg,
             bounding_box_json=m.bounding_box_json,
             writing_area_usage=m.writing_area_usage,
+            review_json=m.review_json,
+            quality_json=m.quality_json,
         )
         self._db.add(model)
         self._db.flush()
@@ -970,6 +984,8 @@ class SQLAlchemyWritingMetricsRepository(WritingMetricsRepository):
             pressure_avg=model.pressure_avg,
             bounding_box_json=model.bounding_box_json,
             writing_area_usage=model.writing_area_usage,
+            review_json=model.review_json,
+            quality_json=model.quality_json,
             created_at=model.created_at,
             updated_at=model.updated_at,
         )
@@ -995,6 +1011,8 @@ class SQLAlchemyWritingMetricsRepository(WritingMetricsRepository):
             model.pressure_avg = m.pressure_avg
             model.bounding_box_json = m.bounding_box_json
             model.writing_area_usage = m.writing_area_usage
+            model.review_json = m.review_json
+            model.quality_json = m.quality_json
             self._db.flush()
         return m
 
@@ -1021,6 +1039,15 @@ class SQLAlchemyAssessmentResultRepository(AssessmentResultRepository):
             speaking_completed_count=r.speaking_completed_count,
             writing_completed_count=r.writing_completed_count,
             intervention_level=r.intervention_level.value if r.intervention_level else None,
+            speaking_average_score=r.speaking_average_score,
+            speaking_review_required_count=r.speaking_review_required_count,
+            total_exercises=r.total_exercises,
+            evaluated_exercises=r.evaluated_exercises,
+            pending_exercises=r.pending_exercises,
+            writing_average_score=r.writing_average_score,
+            writing_review_required_count=r.writing_review_required_count,
+            score_denominator=r.score_denominator,
+            scoring_snapshot_json=r.scoring_snapshot_json,
             generated_at=r.generated_at,
         )
         self._db.add(model)
@@ -1040,6 +1067,74 @@ class SQLAlchemyAssessmentResultRepository(AssessmentResultRepository):
             writing_completed_count=model.writing_completed_count,
             intervention_level=InterventionLevel(model.intervention_level) if model.intervention_level else None,
             generated_at=model.generated_at,
+            created_at=model.created_at,
+            updated_at=model.updated_at,
+            speaking_average_score=model.speaking_average_score,
+            speaking_review_required_count=model.speaking_review_required_count,
+            total_exercises=model.total_exercises,
+            evaluated_exercises=model.evaluated_exercises,
+            pending_exercises=model.pending_exercises,
+            writing_average_score=model.writing_average_score,
+            writing_review_required_count=model.writing_review_required_count,
+            score_denominator=model.score_denominator,
+            scoring_snapshot_json=model.scoring_snapshot_json,
+        )
+
+
+class SQLAlchemyExerciseScoreRepository(ExerciseScoreRepository):
+    def __init__(self, db: Session) -> None:
+        self._db = db
+
+    def find_by_exercise_attempt_id(self, exercise_attempt_id: UUID) -> ExerciseScore | None:
+        model = self._db.scalar(
+            select(ExerciseScoreModel).where(
+                ExerciseScoreModel.exercise_attempt_id == exercise_attempt_id
+            )
+        )
+        return self._to_domain(model) if model else None
+
+    def find_by_assessment_attempt_id(self, attempt_id: UUID) -> list[ExerciseScore]:
+        models = self._db.scalars(
+            select(ExerciseScoreModel)
+            .join(
+                ExerciseAttemptModel,
+                ExerciseAttemptModel.id == ExerciseScoreModel.exercise_attempt_id,
+            )
+            .where(ExerciseAttemptModel.assessment_attempt_id == attempt_id)
+        )
+        return [self._to_domain(model) for model in models]
+
+    def upsert(self, score: ExerciseScore) -> ExerciseScore:
+        model = self._db.scalar(
+            select(ExerciseScoreModel).where(
+                ExerciseScoreModel.exercise_attempt_id == score.exercise_attempt_id
+            )
+        )
+        if model is None:
+            model = ExerciseScoreModel(exercise_attempt_id=score.exercise_attempt_id)
+            self._db.add(model)
+        model.exercise_type = score.exercise_type.value
+        model.score = score.score
+        model.score_eligible = score.score_eligible
+        model.technical_status = score.technical_status.value
+        model.manual_review_required = score.manual_review_required
+        model.quality_reasons_json = score.quality_reasons
+        model.scoring_components_json = score.scoring_components
+        self._db.flush()
+        return self._to_domain(model)
+
+    @staticmethod
+    def _to_domain(model: ExerciseScoreModel) -> ExerciseScore:
+        return ExerciseScore(
+            id=model.id,
+            exercise_attempt_id=model.exercise_attempt_id,
+            exercise_type=ExerciseType(model.exercise_type),
+            score=model.score,
+            score_eligible=model.score_eligible,
+            technical_status=TechnicalStatus(model.technical_status),
+            manual_review_required=model.manual_review_required,
+            quality_reasons=list(model.quality_reasons_json or []),
+            scoring_components=dict(model.scoring_components_json or {}),
             created_at=model.created_at,
             updated_at=model.updated_at,
         )

@@ -120,6 +120,12 @@ class SpeakingResponseResult:
     comparison: dict | None = None
     review: dict | None = None
     error_message: str | None = None
+    exercise_score: float | None = None
+    technical_status: str = "INVALID"
+    score_eligible: bool = False
+    manual_review_required: bool = True
+    quality_reasons: list[str] | None = None
+    scoring_components: dict | None = None
 
 
 @dataclass
@@ -138,6 +144,12 @@ class WritingResponseResult:
     image_url: str | None = None
     created_at: datetime | None = None
     updated_at: datetime | None = None
+    exercise_score: float | None = None
+    technical_status: str = "INVALID"
+    score_eligible: bool = False
+    manual_review_required: bool = True
+    quality_reasons: list[str] | None = None
+    scoring_components: dict | None = None
 
 
 @dataclass
@@ -158,3 +170,5 @@ class FinalResult:
     pending_exercises: int = 0
     writing_average_score: float | None = None
     writing_review_required_count: int = 0
+    score_denominator: int = 0
+    scoring_snapshot: list[dict] | None = None

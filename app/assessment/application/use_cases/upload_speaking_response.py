@@ -4,6 +4,7 @@ from uuid import UUID
 
 from app.assessment.application.assemblers import SpeakingResponseAssembler
 from app.assessment.application.exceptions import (
+    AttemptAlreadyCompletedError,
     ExerciseAttemptNotFoundError,
     ExpectedTextNotFoundError,
     InvalidExerciseTypeError,
@@ -13,6 +14,7 @@ from app.assessment.application.ports.repositories import (
     AssessmentAttemptRepository,
     AssessmentRepository,
     ExerciseAttemptRepository,
+    ExerciseScoreRepository,
     ExerciseRepository,
     ExpectedAnswerRepository,
     PromptExerciseRepository,
@@ -21,13 +23,19 @@ from app.assessment.application.ports.repositories import (
     TemplateExerciseRepository,
 )
 from app.assessment.application.results import SpeakingResponseResult
+from app.assessment.application.exercise_score_service import persist_exercise_score
 from app.assessment.application.use_cases.assess_reading_pipeline import (
     AssessReadingCommand,
     AssessReadingPipelineUseCase,
 )
-from app.assessment.domain.enums import ExerciseAttemptStatus, ExerciseType
+from app.assessment.domain.enums import AttemptStatus, ExerciseAttemptStatus, ExerciseType
 from app.assessment.domain.metrics import SpeakingMetrics
 from app.assessment.domain.response import SpeakingResponse
+from app.assessment.domain.technical_quality import (
+    calculate_reading_score,
+    invalid_reading_quality,
+    reading_quality,
+)
 
 DEFAULT_ASSESSMENT_LOCALE = "es-PE"
 
@@ -55,6 +63,7 @@ class UploadSpeakingResponseUseCase:
         expected_answer_repo: ExpectedAnswerRepository,
         blob_storage: AssessmentBlobStorage,
         pipeline: AssessReadingPipelineUseCase,
+        exercise_score_repo: ExerciseScoreRepository,
     ) -> None:
         self._exercise_attempt_repo = exercise_attempt_repo
         self._template_exercise_repo = template_exercise_repo
@@ -67,6 +76,7 @@ class UploadSpeakingResponseUseCase:
         self._expected_answer_repo = expected_answer_repo
         self._blob_storage = blob_storage
         self._pipeline = pipeline
+        self._exercise_score_repo = exercise_score_repo
 
     async def execute(self, command: UploadSpeakingResponseCommand) -> SpeakingResponseResult:
         ea = self._exercise_attempt_repo.find_by_id(command.exercise_attempt_id)
@@ -89,6 +99,8 @@ class UploadSpeakingResponseUseCase:
             raise ExpectedTextNotFoundError("Expected text not found for this exercise.")
 
         attempt = self._assessment_attempt_repo.find_by_id(ea.assessment_attempt_id)
+        if attempt.status == AttemptStatus.COMPLETED:
+            raise AttemptAlreadyCompletedError("Completed attempts are immutable. Create a repeat attempt.")
         assessment = self._assessment_repo.find_by_id(attempt.assessment_id)
 
         ext = command.original_filename.rsplit(".", 1)[-1] if "." in command.original_filename else "bin"
@@ -105,14 +117,33 @@ class UploadSpeakingResponseUseCase:
         )
 
         language_code = prompt_exercise.language_code or DEFAULT_ASSESSMENT_LOCALE
-        pipeline_result = await self._pipeline.execute(
-            AssessReadingCommand(
-                audio_content=command.file_content,
-                expected_text=expected_answer.expected_text,
-                assessment_locale=language_code,
-                audio_format=command.content_type,
+        try:
+            pipeline_result = await self._pipeline.execute(
+                AssessReadingCommand(
+                    audio_content=command.file_content,
+                    expected_text=expected_answer.expected_text,
+                    assessment_locale=language_code,
+                    audio_format=command.content_type,
+                )
             )
-        )
+        except (ValueError, OSError) as exc:
+            pipeline_result = {
+                "status": "failed",
+                "recognized_text": None,
+                "assessment_recognized_text": None,
+                "pronunciation_score": None,
+                "accuracy_score": None,
+                "fluency_score": None,
+                "completeness_score": None,
+                "prosody_score": None,
+                "duration_ms": command.duration_ms,
+                "comparison": None,
+                "review": {"required": True, "reasons": ["INVALID_AUDIO"]},
+                "diagnostics": {"warnings": ["INVALID_AUDIO"]},
+                "stt": {"status": "failed", "error": {"code": "INVALID_AUDIO"}},
+                "raw_result_json": {},
+                "error_message": str(exc),
+            }
 
         evaluation_status: str = pipeline_result.get("status", "failed")
         free_text: str | None = pipeline_result.get("recognized_text") or pipeline_result.get("stt_recognized_text")
@@ -184,6 +215,9 @@ class UploadSpeakingResponseUseCase:
                     prosody_score=prosody_score,
                     raw_speech_result_json=raw_speech,
                     raw_transcription_result_json=transcription_export,
+                    comparison_json=pipeline_result.get("comparison"),
+                    review_json=pipeline_result.get("review"),
+                    quality_json=None,
                     created_at=existing_metrics.created_at,
                     updated_at=now,
                 )
@@ -200,14 +234,49 @@ class UploadSpeakingResponseUseCase:
                     prosody_score=prosody_score,
                     raw_speech_result_json=raw_speech,
                     raw_transcription_result_json=transcription_export,
+                    comparison_json=pipeline_result.get("comparison"),
+                    review_json=pipeline_result.get("review"),
+                    quality_json=None,
                     created_at=now,
                     updated_at=now,
                 )
             )
 
-        if evaluation_status == "completed":
+        comparison = pipeline_result.get("comparison") or {}
+        lexical_match = comparison.get("lexical_match_percentage")
+        exercise_score, scoring_components = calculate_reading_score(
+            pronunciation_score=pronunciation_score,
+            accuracy_score=accuracy_score,
+            completeness_score=completeness_score,
+            lexical_match=lexical_match,
+        )
+        scoring_components.update(
+            fluency_score=fluency_score,
+            prosody_score=prosody_score,
+            wer=comparison.get("wer"),
+            wer_percentage=comparison.get("wer_percentage"),
+        )
+        quality = (
+            invalid_reading_quality("INVALID_AUDIO")
+            if "INVALID_AUDIO" in (pipeline_result.get("review") or {}).get("reasons", [])
+            else reading_quality(pipeline_result, exercise_score)
+        )
+        existing_metrics = self._speaking_metrics_repo.find_by_speaking_response_id(response.id)
+        if existing_metrics:
+            existing_metrics.quality_json = quality.to_dict()
+            self._speaking_metrics_repo.update(existing_metrics)
+        persist_exercise_score(
+            self._exercise_score_repo,
+            exercise_attempt_id=ea.id,
+            exercise_type=exercise.type,
+            score=exercise_score,
+            quality=quality,
+            scoring_components=scoring_components,
+        )
+
+        if quality.technical_status.value == "VALID":
             ea.status = ExerciseAttemptStatus.EVALUATED
-        elif evaluation_status == "partial":
+        elif quality.technical_status.value == "PARTIAL":
             ea.status = ExerciseAttemptStatus.ANSWERED
         else:
             ea.status = ExerciseAttemptStatus.FAILED
@@ -233,4 +302,10 @@ class UploadSpeakingResponseUseCase:
             comparison=pipeline_result.get("comparison"),
             review=pipeline_result.get("review"),
             error_message=pipeline_result.get("error_message"),
+            exercise_score=exercise_score,
+            technical_status=quality.technical_status.value,
+            score_eligible=quality.score_eligible,
+            manual_review_required=quality.manual_review_required,
+            quality_reasons=quality.quality_reasons,
+            scoring_components=scoring_components,
         )

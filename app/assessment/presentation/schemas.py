@@ -192,6 +192,11 @@ class MCResponseResponse(BaseModel):
     is_correct: bool | None
     created_at: datetime | None = None
     updated_at: datetime | None = None
+    exercise_score: float | None = None
+    technical_status: str = "VALID"
+    score_eligible: bool = True
+    manual_review_required: bool = False
+    quality_reasons: list[str] = []
 
 
 class SubmitOSResponseRequest(BaseModel):
@@ -207,6 +212,11 @@ class OSResponseResponse(BaseModel):
     is_correct: bool | None
     created_at: datetime | None = None
     updated_at: datetime | None = None
+    exercise_score: float | None = None
+    technical_status: str = "VALID"
+    score_eligible: bool = True
+    manual_review_required: bool = False
+    quality_reasons: list[str] = []
 
 
 class SpeakingResponseResponse(BaseModel):
@@ -228,6 +238,12 @@ class SpeakingResponseResponse(BaseModel):
     comparison: dict | None = None
     review: dict | None = None
     error_message: str | None = None
+    exercise_score: float | None = None
+    technical_status: str = "INVALID"
+    score_eligible: bool = False
+    manual_review_required: bool = True
+    quality_reasons: list[str] = []
+    scoring_components: dict = {}
 
 
 class WritingMetricsResponse(BaseModel):
@@ -270,6 +286,12 @@ class WritingResponseResponse(BaseModel):
     image_url: str | None = None
     created_at: datetime | None = None
     updated_at: datetime | None = None
+    exercise_score: float | None = None
+    technical_status: str = "INVALID"
+    score_eligible: bool = False
+    manual_review_required: bool = True
+    quality_reasons: list[str] = []
+    scoring_components: dict = {}
 
 
 class ExerciseSummary(BaseModel):
@@ -281,6 +303,10 @@ class ExerciseSummary(BaseModel):
     status: str
     score: float | None = None
     review_required: bool = False
+    technical_status: str = "INVALID"
+    score_eligible: bool = False
+    quality_reasons: list[str] = []
+    scoring_components: dict = {}
 
 
 class AssessmentResultResponse(BaseModel):
@@ -301,6 +327,8 @@ class AssessmentResultResponse(BaseModel):
     writing_average_score: float | None = None
     writing_review_required_count: int = 0
     exercise_summaries: list[ExerciseSummary] = []
+    score_denominator: int = 0
+    scoring_snapshot: list[dict] = []
 
 
 class AttemptListItem(BaseModel):
@@ -624,6 +652,10 @@ class ExerciseReview(BaseModel):
     metrics: SpeakingMetricsReview | WritingMetricsReview | None = None
     review_required: bool = False
     review_reasons: list[str] = []
+    technical_status: str = "INVALID"
+    score_eligible: bool = False
+    quality_reasons: list[str] = []
+    scoring_components: dict = {}
 
 
 class ReviewResultResponse(BaseModel):

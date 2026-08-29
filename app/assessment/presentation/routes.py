@@ -85,6 +85,7 @@ from app.assessment.infrastructure.repositories.assessment_repositories import (
     SQLAlchemyAssessmentRepository,
     SQLAlchemyAssessmentResultRepository,
     SQLAlchemyExerciseAttemptRepository,
+    SQLAlchemyExerciseScoreRepository,
     SQLAlchemyExerciseRepository,
     SQLAlchemyExpectedAnswerRepository,
     SQLAlchemyMCAnswerOptionRepository,
@@ -891,8 +892,11 @@ def submit_mc_response(
         exercise_attempt_repo=SQLAlchemyExerciseAttemptRepository(db),
         template_exercise_repo=SQLAlchemyTemplateExerciseRepository(db),
         exercise_repo=SQLAlchemyExerciseRepository(db),
+        assessment_attempt_repo=SQLAlchemyAssessmentAttemptRepository(db),
         mc_response_repo=SQLAlchemyMCResponseRepository(db),
         mc_option_repo=SQLAlchemyMCAnswerOptionRepository(db),
+        mc_question_repo=SQLAlchemyMCQuestionRepository(db),
+        exercise_score_repo=SQLAlchemyExerciseScoreRepository(db),
     )
     try:
         result = uc.execute(
@@ -909,6 +913,7 @@ def submit_mc_response(
         exercise_attempt_id=result.exercise_attempt_id,
         selected_option_id=result.selected_option_id,
         is_correct=result.is_correct,
+        exercise_score=100.0 if result.is_correct else 0.0,
     )
 
 
@@ -927,9 +932,11 @@ def submit_os_response(
         exercise_attempt_repo=SQLAlchemyExerciseAttemptRepository(db),
         template_exercise_repo=SQLAlchemyTemplateExerciseRepository(db),
         exercise_repo=SQLAlchemyExerciseRepository(db),
+        assessment_attempt_repo=SQLAlchemyAssessmentAttemptRepository(db),
         os_response_repo=SQLAlchemyOSResponseRepository(db),
         os_question_repo=SQLAlchemyOSQuestionRepository(db),
         os_answer_repo=SQLAlchemyOSAnswerRepository(db),
+        exercise_score_repo=SQLAlchemyExerciseScoreRepository(db),
     )
     try:
         result = uc.execute(
@@ -948,6 +955,7 @@ def submit_os_response(
         selected_syllables=result.selected_syllables,
         formed_word=result.formed_word,
         is_correct=result.is_correct,
+        exercise_score=100.0 if result.is_correct else 0.0,
     )
 
 
@@ -990,6 +998,7 @@ async def upload_speaking_response(
         expected_answer_repo=SQLAlchemyExpectedAnswerRepository(db),
         blob_storage=AzureAssessmentBlobStorage(settings),
         pipeline=pipeline,
+        exercise_score_repo=SQLAlchemyExerciseScoreRepository(db),
     )
     try:
         result = await uc.execute(
@@ -1023,6 +1032,12 @@ async def upload_speaking_response(
         comparison=result.comparison,
         review=result.review,
         error_message=result.error_message,
+        exercise_score=result.exercise_score,
+        technical_status=result.technical_status,
+        score_eligible=result.score_eligible,
+        manual_review_required=result.manual_review_required,
+        quality_reasons=result.quality_reasons or [],
+        scoring_components=result.scoring_components or {},
     )
 
 
@@ -1038,6 +1053,7 @@ def get_speaking_response(
     _resolve_teacher_id(db, current_user.id)
     speaking_repo = SQLAlchemySpeakingResponseRepository(db)
     metrics_repo = SQLAlchemySpeakingMetricsRepository(db)
+    score_repo = SQLAlchemyExerciseScoreRepository(db)
 
     speaking_resp = speaking_repo.find_by_exercise_attempt_id(exercise_attempt_id)
     if not speaking_resp:
@@ -1050,9 +1066,10 @@ def get_speaking_response(
         evaluation_status = "failed"
     elif not metrics:
         evaluation_status = "partial"
-    raw_json = metrics.raw_speech_result_json if metrics else None
-    comparison = raw_json.get("comparison") if raw_json else None
-    review = raw_json.get("review") if raw_json else None
+    legacy_raw = metrics.raw_speech_result_json if metrics else None
+    comparison = (metrics.comparison_json or (legacy_raw or {}).get("comparison")) if metrics else None
+    review = (metrics.review_json or (legacy_raw or {}).get("review")) if metrics else None
+    canonical = score_repo.find_by_exercise_attempt_id(exercise_attempt_id)
 
     return SpeakingResponseResponse(
         response_id=speaking_resp.id,
@@ -1073,6 +1090,12 @@ def get_speaking_response(
         comparison=comparison,
         review=review,
         error_message=None,
+        exercise_score=canonical.score if canonical else None,
+        technical_status=canonical.technical_status.value if canonical else "INVALID",
+        score_eligible=canonical.score_eligible if canonical else False,
+        manual_review_required=canonical.manual_review_required if canonical else True,
+        quality_reasons=canonical.quality_reasons if canonical else ["MISSING_CANONICAL_SCORE"],
+        scoring_components=canonical.scoring_components if canonical else {},
     )
 
 
@@ -1123,6 +1146,7 @@ def upload_writing_response(
         ocr_service=ocr_service,
         prompt_exercise_repo=SQLAlchemyPromptExerciseRepository(db),
         expected_answer_repo=SQLAlchemyExpectedAnswerRepository(db),
+        exercise_score_repo=SQLAlchemyExerciseScoreRepository(db),
     )
     try:
         result = uc.execute(
@@ -1154,15 +1178,8 @@ def upload_writing_response(
             _cer, _wer, _sim = metrics.cer, metrics.wer, metrics.similarity_score
             _c_acc = char_accuracy(_cer) if _cer is not None else None
             _w_acc = word_accuracy(_wer) if _wer is not None else None
-            _reasons: list[str] = []
-            if metrics.confidence_avg is not None and metrics.confidence_avg < 0.70:
-                _reasons.append("LOW_OCR_CONFIDENCE")
-            if _sim is not None and _sim < 75:
-                _reasons.append("LOW_TEXT_SIMILARITY")
-            if _cer is not None and _cer >= 0.25:
-                _reasons.append("HIGH_CHARACTER_ERROR_RATE")
-            if _wer is not None and _wer >= 0.50 and _c_acc is not None and _c_acc < 85:
-                _reasons.append("HIGH_WORD_ERROR_RATE")
+            _review = metrics.review_json or {}
+            _reasons = list(_review.get("reasons") or [])
             metrics_response = WritingMetricsResponse(
                 duration_ms=metrics.duration_ms,
                 stroke_count=metrics.stroke_count,
@@ -1182,7 +1199,7 @@ def upload_writing_response(
                 cer=_cer,
                 wer=_wer,
                 similarity_score=_sim,
-                review_required=len(_reasons) > 0,
+                review_required=bool(_review.get("required")),
                 review_reasons=_reasons,
                 char_accuracy=_c_acc,
                 word_accuracy=_w_acc,
@@ -1205,6 +1222,12 @@ def upload_writing_response(
         image_url=image_url,
         created_at=result.created_at,
         updated_at=result.updated_at,
+        exercise_score=result.exercise_score,
+        technical_status=result.technical_status,
+        score_eligible=result.score_eligible,
+        manual_review_required=result.manual_review_required,
+        quality_reasons=result.quality_reasons or [],
+        scoring_components=result.scoring_components or {},
     )
 
 
@@ -1220,6 +1243,7 @@ def get_writing_response(
     _resolve_teacher_id(db, current_user.id)
     writing_repo = SQLAlchemyWritingResponseRepository(db)
     metrics_repo = SQLAlchemyWritingMetricsRepository(db)
+    score_repo = SQLAlchemyExerciseScoreRepository(db)
 
     writing_resp = writing_repo.find_by_exercise_attempt_id(exercise_attempt_id)
     if not writing_resp:
@@ -1240,15 +1264,8 @@ def get_writing_response(
         _cer, _wer, _sim = metrics.cer, metrics.wer, metrics.similarity_score
         _c_acc = char_accuracy(_cer) if _cer is not None else None
         _w_acc = word_accuracy(_wer) if _wer is not None else None
-        _reasons: list[str] = []
-        if metrics.confidence_avg is not None and metrics.confidence_avg < 0.70:
-            _reasons.append("LOW_OCR_CONFIDENCE")
-        if _sim is not None and _sim < 75:
-            _reasons.append("LOW_TEXT_SIMILARITY")
-        if _cer is not None and _cer >= 0.25:
-            _reasons.append("HIGH_CHARACTER_ERROR_RATE")
-        if _wer is not None and _wer >= 0.50 and _c_acc is not None and _c_acc < 85:
-            _reasons.append("HIGH_WORD_ERROR_RATE")
+        _review = metrics.review_json or {}
+        _reasons = list(_review.get("reasons") or [])
         metrics_response = WritingMetricsResponse(
             duration_ms=metrics.duration_ms,
             stroke_count=metrics.stroke_count,
@@ -1268,12 +1285,13 @@ def get_writing_response(
             cer=_cer,
             wer=_wer,
             similarity_score=_sim,
-            review_required=len(_reasons) > 0,
+            review_required=bool(_review.get("required")),
             review_reasons=_reasons,
             char_accuracy=_c_acc,
             word_accuracy=_w_acc,
         )
 
+    canonical = score_repo.find_by_exercise_attempt_id(exercise_attempt_id)
     return WritingResponseResponse(
         response_id=writing_resp.id,
         exercise_attempt_id=writing_resp.exercise_attempt_id,
@@ -1289,6 +1307,12 @@ def get_writing_response(
         image_url=image_url,
         created_at=writing_resp.created_at,
         updated_at=writing_resp.updated_at,
+        exercise_score=canonical.score if canonical else None,
+        technical_status=canonical.technical_status.value if canonical else "INVALID",
+        score_eligible=canonical.score_eligible if canonical else False,
+        manual_review_required=canonical.manual_review_required if canonical else True,
+        quality_reasons=canonical.quality_reasons if canonical else ["MISSING_CANONICAL_SCORE"],
+        scoring_components=canonical.scoring_components if canonical else {},
     )
 
 
@@ -1296,12 +1320,7 @@ def _build_exercise_summaries(db: Session, attempt_id: UUID) -> list[ExerciseSum
     ea_repo = SQLAlchemyExerciseAttemptRepository(db)
     te_repo = SQLAlchemyTemplateExerciseRepository(db)
     ex_repo = SQLAlchemyExerciseRepository(db)
-    mc_resp_repo = SQLAlchemyMCResponseRepository(db)
-    os_resp_repo = SQLAlchemyOSResponseRepository(db)
-    speaking_resp_repo = SQLAlchemySpeakingResponseRepository(db)
-    speaking_metrics_repo = SQLAlchemySpeakingMetricsRepository(db)
-    writing_resp_repo = SQLAlchemyWritingResponseRepository(db)
-    writing_metrics_repo = SQLAlchemyWritingMetricsRepository(db)
+    score_repo = SQLAlchemyExerciseScoreRepository(db)
 
     exercise_attempts = ea_repo.find_by_assessment_attempt_id(attempt_id)
     summaries = []
@@ -1313,40 +1332,7 @@ def _build_exercise_summaries(db: Session, attempt_id: UUID) -> list[ExerciseSum
         if not exercise:
             continue
 
-        score = None
-        review_required = False
-
-        if exercise.type == ExerciseType.MULTIPLE_CHOICE:
-            resp = mc_resp_repo.find_by_exercise_attempt_id(ea.id)
-            if resp and resp.is_correct:
-                score = 100.0
-            elif resp:
-                score = 0.0
-        elif exercise.type == ExerciseType.ORDER_SYLLABLES:
-            resp = os_resp_repo.find_by_exercise_attempt_id(ea.id)
-            if resp and resp.is_correct:
-                score = 100.0
-            elif resp:
-                score = 0.0
-        elif exercise.type in (ExerciseType.READING_SPEAKING, ExerciseType.LISTENING_SPEAKING):
-            speaking_resp = speaking_resp_repo.find_by_exercise_attempt_id(ea.id)
-            if speaking_resp:
-                metrics = speaking_metrics_repo.find_by_speaking_response_id(speaking_resp.id)
-                if metrics:
-                    scores_list = [s for s in [metrics.pronunciation_score, metrics.accuracy_score, metrics.completeness_score] if s is not None]
-                    if scores_list:
-                        score = sum(scores_list) / len(scores_list)
-                    raw_json = metrics.raw_speech_result_json or {}
-                    review = raw_json.get("review", {})
-                    review_required = review.get("needs_review", False)
-        elif exercise.type in (ExerciseType.READING_WRITING, ExerciseType.LISTENING_WRITING):
-            writing_resp = writing_resp_repo.find_by_exercise_attempt_id(ea.id)
-            if writing_resp:
-                metrics = writing_metrics_repo.find_by_writing_response_id(writing_resp.id)
-                if metrics:
-                    score = metrics.similarity_score
-                    if metrics.similarity_score is not None and metrics.similarity_score < 75:
-                        review_required = True
+        canonical = score_repo.find_by_exercise_attempt_id(ea.id)
 
         summaries.append(
             ExerciseSummary(
@@ -1356,8 +1342,12 @@ def _build_exercise_summaries(db: Session, attempt_id: UUID) -> list[ExerciseSum
                 type=exercise.type.value,
                 title=exercise.title,
                 status=ea.status.value,
-                score=round(score, 2) if score is not None else None,
-                review_required=review_required,
+                score=round(canonical.score, 2) if canonical and canonical.score is not None else None,
+                review_required=canonical.manual_review_required if canonical else True,
+                technical_status=canonical.technical_status.value if canonical else "INVALID",
+                score_eligible=canonical.score_eligible if canonical else False,
+                quality_reasons=canonical.quality_reasons if canonical else ["MISSING_CANONICAL_SCORE"],
+                scoring_components=canonical.scoring_components if canonical else {},
             )
         )
 
@@ -1377,14 +1367,7 @@ def finish_attempt(
         exercise_attempt_repo=SQLAlchemyExerciseAttemptRepository(db),
         template_exercise_repo=SQLAlchemyTemplateExerciseRepository(db),
         exercise_repo=SQLAlchemyExerciseRepository(db),
-        mc_response_repo=SQLAlchemyMCResponseRepository(db),
-        os_response_repo=SQLAlchemyOSResponseRepository(db),
-        speaking_response_repo=SQLAlchemySpeakingResponseRepository(db),
-        writing_response_repo=SQLAlchemyWritingResponseRepository(db),
-        speaking_metrics_repo=SQLAlchemySpeakingMetricsRepository(db),
-        writing_metrics_repo=SQLAlchemyWritingMetricsRepository(db),
-        prompt_exercise_repo=SQLAlchemyPromptExerciseRepository(db),
-        expected_answer_repo=SQLAlchemyExpectedAnswerRepository(db),
+        exercise_score_repo=SQLAlchemyExerciseScoreRepository(db),
         result_repo=SQLAlchemyAssessmentResultRepository(db),
     )
     try:
@@ -1412,6 +1395,8 @@ def finish_attempt(
         pending_exercises=result.pending_exercises,
         writing_average_score=result.writing_average_score,
         writing_review_required_count=result.writing_review_required_count,
+        score_denominator=result.score_denominator,
+        scoring_snapshot=result.scoring_snapshot_json or [],
         exercise_summaries=exercise_summaries,
     )
 
@@ -1426,17 +1411,6 @@ def get_result(
     uc = GetAssessmentResultUseCase(
         attempt_repo=SQLAlchemyAssessmentAttemptRepository(db),
         result_repo=SQLAlchemyAssessmentResultRepository(db),
-        exercise_attempt_repo=SQLAlchemyExerciseAttemptRepository(db),
-        template_exercise_repo=SQLAlchemyTemplateExerciseRepository(db),
-        exercise_repo=SQLAlchemyExerciseRepository(db),
-        mc_response_repo=SQLAlchemyMCResponseRepository(db),
-        os_response_repo=SQLAlchemyOSResponseRepository(db),
-        speaking_response_repo=SQLAlchemySpeakingResponseRepository(db),
-        writing_response_repo=SQLAlchemyWritingResponseRepository(db),
-        writing_metrics_repo=SQLAlchemyWritingMetricsRepository(db),
-        speaking_metrics_repo=SQLAlchemySpeakingMetricsRepository(db),
-        prompt_exercise_repo=SQLAlchemyPromptExerciseRepository(db),
-        expected_answer_repo=SQLAlchemyExpectedAnswerRepository(db),
     )
     try:
         result = uc.execute(GetAssessmentResultQuery(attempt_id=attempt_id))
@@ -1462,6 +1436,8 @@ def get_result(
         pending_exercises=result.pending_exercises,
         writing_average_score=result.writing_average_score,
         writing_review_required_count=result.writing_review_required_count,
+        score_denominator=result.score_denominator,
+        scoring_snapshot=result.scoring_snapshot or [],
         exercise_summaries=exercise_summaries,
     )
 
@@ -1504,7 +1480,7 @@ def get_attempt_review(
         assessment_dict = {
             "assessment_id": str(assessment.id),
             "template_id": str(assessment.template_id),
-            "name": assessment.title or "Untitled",
+            "title": assessment.title or "Untitled",
         }
 
     result_repo = SQLAlchemyAssessmentResultRepository(db)
@@ -1528,6 +1504,8 @@ def get_attempt_review(
             pending_exercises=result.total_exercises - result.evaluated_exercises if hasattr(result, 'total_exercises') and hasattr(result, 'evaluated_exercises') else 0,
             writing_average_score=result.writing_average_score if hasattr(result, 'writing_average_score') else None,
             writing_review_required_count=result.writing_review_required_count if hasattr(result, 'writing_review_required_count') else 0,
+            score_denominator=result.score_denominator,
+            scoring_snapshot=result.scoring_snapshot_json or [],
         )
 
     ea_repo = SQLAlchemyExerciseAttemptRepository(db)
@@ -1545,6 +1523,7 @@ def get_attempt_review(
     speaking_metrics_repo = SQLAlchemySpeakingMetricsRepository(db)
     writing_resp_repo = SQLAlchemyWritingResponseRepository(db)
     writing_metrics_repo = SQLAlchemyWritingMetricsRepository(db)
+    score_repo = SQLAlchemyExerciseScoreRepository(db)
     storage = AzureAssessmentBlobStorage(get_settings())
 
     exercise_attempts = ea_repo.find_by_assessment_attempt_id(attempt_id)
@@ -1586,10 +1565,6 @@ def get_attempt_review(
                     selected_text=option.text if option else None,
                     is_correct=mc_resp.is_correct,
                 )
-                if mc_resp.is_correct:
-                    score = 100.0
-                else:
-                    score = 0.0
             if mc_q:
                 correct_opts = [o for o in mc_opt_repo.find_by_question_id(mc_q.id) if o.is_correct]
                 if correct_opts:
@@ -1609,10 +1584,6 @@ def get_attempt_review(
                     formed_word=os_resp.formed_word,
                     is_correct=os_resp.is_correct,
                 )
-                if os_resp.is_correct:
-                    score = 100.0
-                else:
-                    score = 0.0
             if os_q:
                 os_a = os_a_repo.find_by_question_id(os_q.id)
                 if os_a:
@@ -1625,7 +1596,8 @@ def get_attempt_review(
             prompt = prompt_repo.find_by_exercise_id(exercise.id)
             if prompt:
                 prompt_text = prompt.prompt_text
-                reference_text = prompt.text_to_show
+                expected_answer = expected_repo.find_by_prompt_exercise_id(prompt.id)
+                reference_text = expected_answer.expected_text if expected_answer else prompt.text_to_show
             speaking_resp = speaking_resp_repo.find_by_exercise_attempt_id(ea.id)
             if speaking_resp:
                 audio_url = None
@@ -1642,9 +1614,8 @@ def get_attempt_review(
                 )
             metrics = speaking_metrics_repo.find_by_speaking_response_id(speaking_resp.id if speaking_resp else None)
             if metrics:
-                raw_json = metrics.raw_speech_result_json or {}
-                comparison = raw_json.get("comparison") or {}
-                review = raw_json.get("review") or {}
+                comparison = metrics.comparison_json or {}
+                review = metrics.review_json or {}
                 metrics_data = SpeakingMetricsReview(
                     pronunciation_score=metrics.pronunciation_score,
                     accuracy_score=metrics.accuracy_score,
@@ -1654,27 +1625,15 @@ def get_attempt_review(
                     lexical_match=comparison.get("lexical_match_percentage"),
                     wer_percentage=comparison.get("wer_percentage"),
                 )
-                review_required = review.get("needs_review", False)
+                review_required = review.get("required", False)
                 review_reasons = review.get("reasons", [])
-                scores_list = [s for s in [metrics.pronunciation_score, metrics.accuracy_score, metrics.completeness_score] if s is not None]
-                if scores_list:
-                    score = sum(scores_list) / len(scores_list)
-            elif speaking_resp and speaking_resp.free_transcription_text and prompt:
-                from app.assessment.domain.text_comparison import compare_texts
-                exp_ans = expected_repo.find_by_prompt_exercise_id(prompt.id)
-                if exp_ans:
-                    comp = compare_texts(exp_ans.expected_text, speaking_resp.free_transcription_text)
-                    score = comp.lexical_match_percentage
-                    metrics_data = SpeakingMetricsReview(
-                        lexical_match=comp.lexical_match_percentage,
-                        wer_percentage=comp.wer_percentage,
-                    )
 
         elif etype in (ExerciseType.READING_WRITING, ExerciseType.LISTENING_WRITING):
             prompt = prompt_repo.find_by_exercise_id(exercise.id)
             if prompt:
                 prompt_text = prompt.prompt_text
-                reference_text = prompt.text_to_show
+                expected_answer = expected_repo.find_by_prompt_exercise_id(prompt.id)
+                reference_text = expected_answer.expected_text if expected_answer else prompt.text_to_show
             writing_resp = writing_resp_repo.find_by_exercise_attempt_id(ea.id)
             if writing_resp:
                 image_url = None
@@ -1691,17 +1650,9 @@ def get_attempt_review(
                 )
             metrics = writing_metrics_repo.find_by_writing_response_id(writing_resp.id if writing_resp else None)
             if metrics:
-                score = metrics.similarity_score
-                reasons_list = []
-                if metrics.confidence_avg is not None and metrics.confidence_avg < 0.70:
-                    reasons_list.append("LOW_OCR_CONFIDENCE")
-                if metrics.similarity_score is not None and metrics.similarity_score < 75:
-                    reasons_list.append("LOW_TEXT_SIMILARITY")
-                if metrics.cer is not None and metrics.cer >= 0.25:
-                    reasons_list.append("HIGH_CHARACTER_ERROR_RATE")
-                if metrics.wer is not None and metrics.wer >= 0.50:
-                    reasons_list.append("HIGH_WORD_ERROR_RATE")
-                review_required = len(reasons_list) > 0
+                writing_review = metrics.review_json or {}
+                reasons_list = list(writing_review.get("reasons") or [])
+                review_required = bool(writing_review.get("required"))
                 review_reasons = reasons_list
                 metrics_data = WritingMetricsReview(
                     confidence_avg=metrics.confidence_avg,
@@ -1721,6 +1672,10 @@ def get_attempt_review(
                     writing_area_usage=metrics.writing_area_usage,
                 )
 
+        canonical = score_repo.find_by_exercise_attempt_id(ea.id)
+        score = canonical.score if canonical else None
+        review_required = canonical.manual_review_required if canonical else True
+        review_reasons = canonical.quality_reasons if canonical else ["MISSING_CANONICAL_SCORE"]
         exercise_reviews.append(
             ExerciseReview(
                 exercise_attempt_id=ea.id,
@@ -1739,6 +1694,10 @@ def get_attempt_review(
                 metrics=metrics_data,
                 review_required=review_required,
                 review_reasons=review_reasons,
+                technical_status=canonical.technical_status.value if canonical else "INVALID",
+                score_eligible=canonical.score_eligible if canonical else False,
+                quality_reasons=canonical.quality_reasons if canonical else ["MISSING_CANONICAL_SCORE"],
+                scoring_components=canonical.scoring_components if canonical else {},
             )
         )
 

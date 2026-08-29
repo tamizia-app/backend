@@ -4,6 +4,7 @@ from uuid import UUID
 
 from app.assessment.application.assemblers import WritingResponseAssembler
 from app.assessment.application.exceptions import (
+    AttemptAlreadyCompletedError,
     ExerciseAttemptNotFoundError,
     InvalidExerciseTypeError,
 )
@@ -13,6 +14,7 @@ from app.assessment.application.ports.repositories import (
     AssessmentAttemptRepository,
     AssessmentRepository,
     ExerciseAttemptRepository,
+    ExerciseScoreRepository,
     ExerciseRepository,
     ExpectedAnswerRepository,
     PromptExerciseRepository,
@@ -21,10 +23,13 @@ from app.assessment.application.ports.repositories import (
     WritingResponseRepository,
 )
 from app.assessment.application.results import WritingResponseResult
+from app.assessment.application.exercise_score_service import persist_exercise_score
 from app.assessment.domain.writing_text_comparison import determine_writing_review
-from app.assessment.domain.enums import ExerciseAttemptStatus, ExerciseType
+from app.assessment.domain.enums import AttemptStatus, ExerciseAttemptStatus, ExerciseType
+from app.assessment.domain.file_validation import validate_image_content
 from app.assessment.domain.metrics import WritingMetrics
 from app.assessment.domain.response import WritingResponse
+from app.assessment.domain.technical_quality import writing_quality
 
 
 @dataclass
@@ -50,6 +55,7 @@ class UploadWritingResponseUseCase:
         ocr_service: OcrService | None = None,
         prompt_exercise_repo: PromptExerciseRepository | None = None,
         expected_answer_repo: ExpectedAnswerRepository | None = None,
+        exercise_score_repo: ExerciseScoreRepository | None = None,
     ) -> None:
         self._exercise_attempt_repo = exercise_attempt_repo
         self._template_exercise_repo = template_exercise_repo
@@ -62,6 +68,7 @@ class UploadWritingResponseUseCase:
         self._ocr_service = ocr_service
         self._prompt_exercise_repo = prompt_exercise_repo
         self._expected_answer_repo = expected_answer_repo
+        self._exercise_score_repo = exercise_score_repo
 
     def execute(self, command: UploadWritingResponseCommand) -> WritingResponseResult:
         ea = self._exercise_attempt_repo.find_by_id(command.exercise_attempt_id)
@@ -76,7 +83,13 @@ class UploadWritingResponseUseCase:
             )
 
         attempt = self._assessment_attempt_repo.find_by_id(ea.assessment_attempt_id)
+        if attempt.status == AttemptStatus.COMPLETED:
+            raise AttemptAlreadyCompletedError("Completed attempts are immutable. Create a repeat attempt.")
         assessment = self._assessment_repo.find_by_id(attempt.assessment_id)
+
+        image_valid, image_error = validate_image_content(
+            command.file_content, command.content_type
+        )
 
         ext = command.original_filename.rsplit(".", 1)[-1] if "." in command.original_filename else "png"
         blob_path = self._blob_storage.upload_file(
@@ -103,7 +116,7 @@ class UploadWritingResponseUseCase:
 
         # Run OCR on the uploaded image
         ocr_result: OcrResult | None = None
-        recognized_text: str | None = existing.recognized_text if existing else None
+        recognized_text: str | None = None
         if self._ocr_service is not None:
             ocr_result = self._ocr_service.extract_text(command.file_content)
             if ocr_result.full_text:
@@ -150,17 +163,17 @@ class UploadWritingResponseUseCase:
 
         # Run text comparison if we have both expected and recognized text
         expected_text = self._get_expected_text(te)
+        review = determine_writing_review(
+            expected=expected_text or "",
+            recognized=recognized_text or "",
+            confidence_avg=ocr_result.confidence_avg if ocr_result else None,
+        )
         if expected_text and recognized_text:
-            review = determine_writing_review(
-                expected=expected_text,
-                recognized=recognized_text,
-                confidence_avg=ocr_result.confidence_avg if ocr_result else None,
-            )
             ocr_metrics["cer"] = review.cer
             ocr_metrics["wer"] = review.wer
             ocr_metrics["similarity_score"] = review.similarity_score
 
-        if frontend_metrics or ocr_metrics:
+        if frontend_metrics or ocr_metrics or ocr_result or image_error:
             metrics_data = self._extract_metrics(frontend_metrics or {})
             metrics_data.update(ocr_metrics)
             existing_metrics = self._writing_metrics_repo.find_by_writing_response_id(response.id)
@@ -171,6 +184,11 @@ class UploadWritingResponseUseCase:
                         writing_response_id=response.id,
                         created_at=existing_metrics.created_at,
                         updated_at=now,
+                        review_json={
+                            "required": review.review_required,
+                            "reasons": review.review_reasons,
+                        },
+                        quality_json=None,
                         **metrics_data,
                     )
                 )
@@ -181,20 +199,80 @@ class UploadWritingResponseUseCase:
                         writing_response_id=response.id,
                         created_at=now,
                         updated_at=now,
+                        review_json={
+                            "required": review.review_required,
+                            "reasons": review.review_reasons,
+                        },
+                        quality_json=None,
                         **metrics_data,
                     )
                 )
 
-        # Mark exercise attempt as EVALUATED if OCR produced text, else ANSWERED
+        candidate_score = review.similarity_score if expected_text and recognized_text else None
+        quality_reasons = list(review.review_reasons)
+        successful_ocr = bool(ocr_result and ocr_result.full_text)
+        if image_error and not successful_ocr:
+            quality_reasons.append(image_error)
+        quality = writing_quality(
+            recognized_text=recognized_text,
+            confidence_avg=ocr_result.confidence_avg if ocr_result else None,
+            score=candidate_score,
+            review_required=review.review_required or bool(image_error),
+            review_reasons=quality_reasons,
+            error_code=(
+                ocr_result.error_code
+                if ocr_result and ocr_result.error_code
+                else image_error
+                if image_error and not successful_ocr
+                else None
+            ),
+        )
+        existing_metrics = self._writing_metrics_repo.find_by_writing_response_id(response.id)
+        if existing_metrics:
+            existing_metrics.quality_json = quality.to_dict()
+            self._writing_metrics_repo.update(existing_metrics)
+        scoring_components = {
+            "confidence_avg": ocr_result.confidence_avg if ocr_result else None,
+            "cer": review.cer if expected_text else None,
+            "wer": review.wer if expected_text else None,
+            "similarity_score": candidate_score,
+            "char_accuracy": review.char_accuracy if expected_text else None,
+            "word_accuracy": review.word_accuracy if expected_text else None,
+            "formula": "0.75_char_accuracy_plus_0.25_word_accuracy",
+        }
+        if self._exercise_score_repo:
+            persist_exercise_score(
+                self._exercise_score_repo,
+                exercise_attempt_id=ea.id,
+                exercise_type=exercise.type,
+                score=candidate_score,
+                quality=quality,
+                scoring_components=scoring_components,
+            )
+
         ea.status = (
             ExerciseAttemptStatus.EVALUATED
-            if recognized_text
+            if quality.score_eligible
+            else ExerciseAttemptStatus.FAILED
+            if quality.technical_status.value == "INVALID"
             else ExerciseAttemptStatus.ANSWERED
         )
         ea.submitted_at = now
         self._exercise_attempt_repo.update(ea)
 
-        return WritingResponseAssembler.to_result(response)
+        result = WritingResponseAssembler.to_result(response)
+        result.metrics = {
+            **scoring_components,
+            "review_required": quality.manual_review_required,
+            "review_reasons": quality.quality_reasons,
+        }
+        result.exercise_score = candidate_score
+        result.technical_status = quality.technical_status.value
+        result.score_eligible = quality.score_eligible
+        result.manual_review_required = quality.manual_review_required
+        result.quality_reasons = quality.quality_reasons
+        result.scoring_components = scoring_components
+        return result
 
     def _get_expected_text(self, te) -> str | None:
         if not self._prompt_exercise_repo or not self._expected_answer_repo:

@@ -1,4 +1,6 @@
 from datetime import UTC, datetime, timedelta
+from hashlib import sha256
+import os
 from pathlib import Path
 from uuid import UUID
 
@@ -48,8 +50,7 @@ class AzureAssessmentBlobStorage:
             )
             return blob_name
 
-        local_root = Path(self._settings.local_storage_path) / "assessments"
-        target = local_root / blob_name
+        target = self._local_target(blob_name)
         target.parent.mkdir(parents=True, exist_ok=True)
         target.write_bytes(content)
         return blob_name
@@ -75,8 +76,7 @@ class AzureAssessmentBlobStorage:
             )
             return blob_path
 
-        local_root = Path(self._settings.local_storage_path) / "assessments"
-        target = local_root / blob_path
+        target = self._local_target(blob_path)
         target.parent.mkdir(parents=True, exist_ok=True)
         target.write_bytes(content)
         return blob_path
@@ -95,5 +95,20 @@ class AzureAssessmentBlobStorage:
             )
             return f"{blob_client.url}?{sas_token}"
 
-        local_path = Path(self._settings.local_storage_path) / "assessments" / blob_path
+        local_path = self._local_target(blob_path, prefer_existing=True)
         return local_path.as_uri()
+
+    def _local_target(self, blob_path: str, *, prefer_existing: bool = False) -> Path:
+        root = Path(self._settings.local_storage_path)
+        legacy = root / "assessments" / blob_path
+        if prefer_existing and legacy.exists():
+            return legacy.resolve()
+        # UUID-rich assessment paths can exceed Win32's legacy MAX_PATH. Keep the
+        # public blob name stable while mapping only the local fallback to a short,
+        # deterministic object path. Azure paths and DB values remain unchanged.
+        absolute_length = len(str(legacy.absolute()))
+        if os.name != "nt" or absolute_length < 240:
+            return legacy.absolute()
+        digest = sha256(blob_path.encode("utf-8")).hexdigest()
+        suffix = Path(blob_path).suffix[:10]
+        return (root / "assessment_objects" / digest[:2] / f"{digest}{suffix}").absolute()

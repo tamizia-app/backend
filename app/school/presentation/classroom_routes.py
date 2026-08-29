@@ -107,8 +107,11 @@ def get_classroom(
     db: Session = Depends(get_db),
     current_user: UserModel = Depends(get_current_user),
 ) -> ClassroomResponse:
+    homeroom_teacher_id = _resolve_teacher_id(db, current_user.id)
     uc = GetClassroomUseCase(_classroom_repo(db))
     result = uc.execute(GetClassroomQuery(classroom_id=classroom_id))
+    if result.homeroom_teacher_id != homeroom_teacher_id:
+        raise HTTPException(status_code=404, detail="Classroom not found")
     return ClassroomResponse(
         classroom_id=result.classroom_id,
         homeroom_teacher_id=result.homeroom_teacher_id,
@@ -155,6 +158,12 @@ def delete_classroom(
     db: Session = Depends(get_db),
     current_user: UserModel = Depends(get_current_user),
 ) -> None:
+    homeroom_teacher_id = _resolve_teacher_id(db, current_user.id)
+    existing = GetClassroomUseCase(_classroom_repo(db)).execute(
+        GetClassroomQuery(classroom_id=classroom_id)
+    )
+    if existing.homeroom_teacher_id != homeroom_teacher_id:
+        raise HTTPException(status_code=404, detail="Classroom not found")
     uc = DeleteClassroomUseCase(_classroom_repo(db))
     uc.execute(DeleteClassroomCommand(classroom_id=classroom_id))
     db.commit()

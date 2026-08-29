@@ -65,6 +65,18 @@ class ConsentRequiredError(AssessmentException):
 
 class AttemptAlreadyCompletedError(AssessmentException):
     def __init__(self, detail: str = "Attempt is already completed.") -> None:
+        self.status_code = 409
+        self.detail = detail
+
+
+class AttemptNotEvaluableError(AssessmentException):
+    def __init__(self, detail: str = "Attempt has required exercises without an eligible score.") -> None:
+        self.status_code = 409
+        self.detail = detail
+
+
+class InvalidMCOptionError(AssessmentException):
+    def __init__(self, detail: str = "Selected option does not belong to this exercise.") -> None:
         self.status_code = 400
         self.detail = detail
 

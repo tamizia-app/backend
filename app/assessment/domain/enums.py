@@ -33,3 +33,9 @@ class InterventionLevel(StrEnum):
     LOW = "LOW"
     MEDIUM = "MEDIUM"
     HIGH = "HIGH"
+
+
+class TechnicalStatus(StrEnum):
+    VALID = "VALID"
+    PARTIAL = "PARTIAL"
+    INVALID = "INVALID"
