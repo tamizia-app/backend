@@ -85,6 +85,32 @@ class AttachExerciseRequest(BaseModel):
     is_required: bool = True
 
 
+class TemplateExercisePointsUpdateRequest(BaseModel):
+    points: int = Field(ge=1, le=3)
+
+
+class TemplateExercisePointsResponse(BaseModel):
+    template_exercise_id: UUID
+    template_id: UUID
+    exercise_id: UUID
+    order_index: int
+    points: int
+    is_required: bool
+
+
+class InvalidTemplatePointsResponse(BaseModel):
+    template_id: UUID
+    template_name: str
+    template_version: int
+    is_active: bool
+    template_exercise_id: UUID
+    exercise_id: UUID
+    exercise_type: str
+    order_index: int
+    current_points: int
+    reason: str
+
+
 class CreateAssessmentRequest(BaseModel):
     template_id: UUID
     classroom_id: UUID

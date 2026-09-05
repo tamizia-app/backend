@@ -28,6 +28,10 @@ from app.assessment.application.use_cases.create_template import (
     CreateTemplateCommand,
     CreateTemplateUseCase,
 )
+from app.assessment.application.use_cases.delete_template import (
+    DeleteTemplateCommand,
+    DeleteTemplateUseCase,
+)
 from app.assessment.application.use_cases.finish_assessment_attempt import (
     FinishAssessmentAttemptCommand,
     FinishAssessmentAttemptUseCase,
@@ -40,9 +44,17 @@ from app.assessment.application.use_cases.get_student_assessment_history import 
     GetStudentAssessmentHistoryQuery,
     GetStudentAssessmentHistoryUseCase,
 )
+from app.assessment.application.use_cases.list_invalid_template_points import (
+    ListInvalidTemplatePointsQuery,
+    ListInvalidTemplatePointsUseCase,
+)
 from app.assessment.application.use_cases.repeat_assessment_attempt import (
     RepeatAssessmentAttemptCommand,
     RepeatAssessmentAttemptUseCase,
+)
+from app.assessment.application.use_cases.set_template_active import (
+    SetTemplateActiveCommand,
+    SetTemplateActiveUseCase,
 )
 from app.assessment.application.use_cases.start_assessment_attempt import (
     StartAssessmentAttemptCommand,
@@ -59,6 +71,10 @@ from app.assessment.application.use_cases.submit_os_response import (
 from app.assessment.application.use_cases.upload_speaking_response import (
     UploadSpeakingResponseCommand,
     UploadSpeakingResponseUseCase,
+)
+from app.assessment.application.use_cases.update_template_exercise_points import (
+    UpdateTemplateExercisePointsCommand,
+    UpdateTemplateExercisePointsUseCase,
 )
 from app.assessment.application.use_cases.upload_writing_response import (
     UploadWritingResponseCommand,
@@ -132,6 +148,7 @@ from app.assessment.presentation.schemas import (
     ExerciseResponse,
     ExerciseReview,
     ExerciseSummary,
+    InvalidTemplatePointsResponse,
     MCExpectedReview,
     MCQuestionImageUploadResponse,
     MCResponseResponse,
@@ -153,6 +170,8 @@ from app.assessment.presentation.schemas import (
     StudentInfo,
     SubmitMCResponseRequest,
     SubmitOSResponseRequest,
+    TemplateExercisePointsResponse,
+    TemplateExercisePointsUpdateRequest,
     TemplateResponse,
     WritingMetricsResponse,
     WritingMetricsReview,
@@ -276,6 +295,19 @@ def _snapshot_int(meta: dict, key: str, fallback: int) -> int:
     return int(fallback or 0)
 
 
+def _template_response(template) -> TemplateResponse:
+    return TemplateResponse(
+        template_id=template.template_id,
+        name=template.name,
+        description=template.description,
+        version=template.version,
+        is_active=template.is_active,
+        created_by_teacher_id=template.created_by_teacher_id,
+        created_at=template.created_at,
+        updated_at=template.updated_at,
+    )
+
+
 # ─── Template endpoints ───────────────────────────────────────
 
 
@@ -353,6 +385,135 @@ def get_template(
         created_by_teacher_id=template.created_by_teacher_id,
         created_at=template.created_at,
         updated_at=template.updated_at,
+    )
+
+
+@router.patch("/templates/{template_id}/deactivate", response_model=TemplateResponse)
+def deactivate_template(
+    template_id: UUID,
+    db: Session = Depends(get_db),
+    current_user: UserModel = Depends(get_current_user),
+) -> TemplateResponse:
+    teacher_id = _resolve_teacher_id(db, current_user.id)
+    uc = SetTemplateActiveUseCase(SQLAlchemyTemplateRepository(db))
+    try:
+        result = uc.execute(
+            SetTemplateActiveCommand(
+                template_id=template_id,
+                teacher_id=teacher_id,
+                is_active=False,
+            )
+        )
+    except AssessmentException as e:
+        raise HTTPException(status_code=e.status_code, detail=e.detail)
+    db.commit()
+    return _template_response(result)
+
+
+@router.patch("/templates/{template_id}/activate", response_model=TemplateResponse)
+def activate_template(
+    template_id: UUID,
+    db: Session = Depends(get_db),
+    current_user: UserModel = Depends(get_current_user),
+) -> TemplateResponse:
+    teacher_id = _resolve_teacher_id(db, current_user.id)
+    uc = SetTemplateActiveUseCase(SQLAlchemyTemplateRepository(db))
+    try:
+        result = uc.execute(
+            SetTemplateActiveCommand(
+                template_id=template_id,
+                teacher_id=teacher_id,
+                is_active=True,
+            )
+        )
+    except AssessmentException as e:
+        raise HTTPException(status_code=e.status_code, detail=e.detail)
+    db.commit()
+    return _template_response(result)
+
+
+@router.delete("/templates/{template_id}", status_code=status.HTTP_204_NO_CONTENT)
+def delete_template(
+    template_id: UUID,
+    db: Session = Depends(get_db),
+    current_user: UserModel = Depends(get_current_user),
+) -> None:
+    teacher_id = _resolve_teacher_id(db, current_user.id)
+    uc = DeleteTemplateUseCase(
+        template_repo=SQLAlchemyTemplateRepository(db),
+        template_exercise_repo=SQLAlchemyTemplateExerciseRepository(db),
+    )
+    try:
+        uc.execute(DeleteTemplateCommand(template_id=template_id, teacher_id=teacher_id))
+    except AssessmentException as e:
+        raise HTTPException(status_code=e.status_code, detail=e.detail)
+    db.commit()
+    return None
+
+
+@router.get(
+    "/admin/templates/invalid-points",
+    response_model=list[InvalidTemplatePointsResponse],
+)
+def list_invalid_template_points(
+    db: Session = Depends(get_db),
+    current_user: UserModel = Depends(get_current_user),
+) -> list[InvalidTemplatePointsResponse]:
+    teacher_id = _resolve_teacher_id(db, current_user.id)
+    uc = ListInvalidTemplatePointsUseCase(SQLAlchemyTemplateExerciseRepository(db))
+    rows = uc.execute(ListInvalidTemplatePointsQuery(teacher_id=teacher_id))
+    return [
+        InvalidTemplatePointsResponse(
+            template_id=row.template_id,
+            template_name=row.template_name,
+            template_version=row.template_version,
+            is_active=row.is_active,
+            template_exercise_id=row.template_exercise_id,
+            exercise_id=row.exercise_id,
+            exercise_type=row.exercise_type,
+            order_index=row.order_index,
+            current_points=row.current_points,
+            reason=row.reason,
+        )
+        for row in rows
+    ]
+
+
+@router.patch(
+    "/templates/{template_id}/exercises/{template_exercise_id}/points",
+    response_model=TemplateExercisePointsResponse,
+)
+def update_template_exercise_points(
+    template_id: UUID,
+    template_exercise_id: UUID,
+    request: TemplateExercisePointsUpdateRequest,
+    db: Session = Depends(get_db),
+    current_user: UserModel = Depends(get_current_user),
+) -> TemplateExercisePointsResponse:
+    teacher_id = _resolve_teacher_id(db, current_user.id)
+    uc = UpdateTemplateExercisePointsUseCase(
+        template_repo=SQLAlchemyTemplateRepository(db),
+        template_exercise_repo=SQLAlchemyTemplateExerciseRepository(db),
+    )
+    try:
+        result = uc.execute(
+            UpdateTemplateExercisePointsCommand(
+                template_id=template_id,
+                template_exercise_id=template_exercise_id,
+                teacher_id=teacher_id,
+                points=request.points,
+            )
+        )
+    except AssessmentException as e:
+        raise HTTPException(status_code=e.status_code, detail=e.detail)
+    db.commit()
+    return TemplateExercisePointsResponse(
+        template_exercise_id=result.id,
+        template_id=result.template_id,
+        exercise_id=result.exercise_id,
+        order_index=result.order_index,
+        points=result.points,
+        is_required=result.is_required,
     )
 
 

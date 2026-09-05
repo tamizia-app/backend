@@ -9,6 +9,25 @@ class TemplateNotFoundError(AssessmentException):
         self.detail = detail
 
 
+class TemplateExerciseNotFoundError(AssessmentException):
+    def __init__(self, detail: str = "Template exercise not found.") -> None:
+        self.status_code = 404
+        self.detail = detail
+
+
+class TemplateHasHistoryError(AssessmentException):
+    def __init__(self) -> None:
+        self.status_code = 409
+        self.detail = {
+            "code": "TEMPLATE_HAS_HISTORY",
+            "message": (
+                "La plantilla tiene intentos asociados y no puede eliminarse físicamente. "
+                "Desactívala en su lugar."
+            ),
+            "recommendation": "Usar endpoint de deactivate/archive.",
+        }
+
+
 class ExerciseNotFoundError(AssessmentException):
     def __init__(self, detail: str = "Exercise not found.") -> None:
         self.status_code = 404

@@ -115,6 +115,32 @@ class SQLAlchemyTemplateRepository(TemplateRepository):
             self._db.flush()
         return template
 
+    def delete(self, template_id: UUID) -> None:
+        model = self._db.get(AssessmentTemplateModel, template_id)
+        if model:
+            self._db.delete(model)
+            self._db.flush()
+
+    def has_history(self, template_id: UUID) -> bool:
+        assessment_id = self._db.scalar(
+            select(AssessmentModel.id)
+            .where(AssessmentModel.template_id == template_id)
+            .limit(1)
+        )
+        if assessment_id:
+            return True
+
+        exercise_attempt_id = self._db.scalar(
+            select(ExerciseAttemptModel.id)
+            .join(
+                AssessmentTemplateExerciseModel,
+                ExerciseAttemptModel.template_exercise_id == AssessmentTemplateExerciseModel.id,
+            )
+            .where(AssessmentTemplateExerciseModel.template_id == template_id)
+            .limit(1)
+        )
+        return bool(exercise_attempt_id)
+
     @staticmethod
     def _to_domain(model: AssessmentTemplateModel) -> AssessmentTemplate:
         return AssessmentTemplate(
@@ -157,11 +183,50 @@ class SQLAlchemyTemplateExerciseRepository(TemplateExerciseRepository):
         self._db.flush()
         return self._to_domain(model)
 
+    def update_points(self, template_exercise_id: UUID, points: int) -> AssessmentTemplateExercise:
+        model = self._db.get(AssessmentTemplateExerciseModel, template_exercise_id)
+        if not model:
+            raise ValueError("Template exercise not found.")
+        model.points = points
+        self._db.flush()
+        return self._to_domain(model)
+
     def delete_by_template_id(self, template_id: UUID) -> None:
         self._db.query(AssessmentTemplateExerciseModel).filter(
             AssessmentTemplateExerciseModel.template_id == template_id
         ).delete()
         self._db.flush()
+
+    def find_invalid_points_by_teacher_id(self, teacher_id: UUID) -> list[dict]:
+        rows = self._db.execute(
+            select(
+                AssessmentTemplateModel.id.label("template_id"),
+                AssessmentTemplateModel.name.label("template_name"),
+                AssessmentTemplateModel.version.label("template_version"),
+                AssessmentTemplateModel.is_active.label("is_active"),
+                AssessmentTemplateExerciseModel.id.label("template_exercise_id"),
+                AssessmentTemplateExerciseModel.exercise_id.label("exercise_id"),
+                AssessmentExerciseModel.type.label("exercise_type"),
+                AssessmentTemplateExerciseModel.order_index.label("order_index"),
+                AssessmentTemplateExerciseModel.points.label("current_points"),
+            )
+            .join(
+                AssessmentTemplateExerciseModel,
+                AssessmentTemplateExerciseModel.template_id == AssessmentTemplateModel.id,
+            )
+            .join(
+                AssessmentExerciseModel,
+                AssessmentExerciseModel.id == AssessmentTemplateExerciseModel.exercise_id,
+            )
+            .where(AssessmentTemplateModel.created_by_teacher_id == teacher_id)
+            .where(~AssessmentTemplateExerciseModel.points.in_([1, 2, 3]))
+            .order_by(
+                AssessmentTemplateModel.name,
+                AssessmentTemplateModel.version,
+                AssessmentTemplateExerciseModel.order_index,
+            )
+        )
+        return [dict(row._mapping) for row in rows]
 
     @staticmethod
     def _to_domain(model: AssessmentTemplateExerciseModel) -> AssessmentTemplateExercise:

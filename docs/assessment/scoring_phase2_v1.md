@@ -43,6 +43,8 @@ New template-exercise attachments only accept `points` values 1, 2 or 3. The def
 
 Legacy templates may still contain older values such as `points = 10`. Phase 2 v1 does not silently map those values. Attempts based on templates with invalid points are blocked at finalization with a clear error so the template can be corrected before pilot use.
 
+Use the Phase 2 admin tools to list and correct invalid legacy `points` before using templates in pilot flows. Correcting template-exercise points affects future scoring for that template relation; finalized historical results are not recalculated.
+
 ## FinalScore
 
 The final score is a weighted mean of eligible exercise scores:
