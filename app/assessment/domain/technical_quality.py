@@ -6,6 +6,17 @@ from typing import Any
 from app.assessment.domain.enums import TechnicalStatus
 
 
+SCORING_VERSION_PHASE2_V1 = "phase2_v1"
+
+READING_PHASE2_COMPONENT_WEIGHTS = {
+    "accuracy_score": 0.25,
+    "fluency_score": 0.25,
+    "pronunciation_score": 0.20,
+    "completeness_score": 0.15,
+    "lexical_match": 0.15,
+}
+
+
 READING_TECHNICAL_REASONS = frozenset(
     {
         "STT_PROVIDER_FAILED",
@@ -46,22 +57,40 @@ def calculate_reading_score(
     *,
     pronunciation_score: float | None,
     accuracy_score: float | None,
+    fluency_score: float | None,
     completeness_score: float | None,
     lexical_match: float | None,
 ) -> tuple[float | None, dict[str, Any]]:
     named = {
-        "pronunciation_score": pronunciation_score,
         "accuracy_score": accuracy_score,
+        "fluency_score": fluency_score,
+        "pronunciation_score": pronunciation_score,
         "completeness_score": completeness_score,
         "lexical_match": lexical_match,
     }
     used = {name: value for name, value in named.items() if value is not None}
-    score = sum(used.values()) / len(used) if used else None
+    available_weight_sum = sum(READING_PHASE2_COMPONENT_WEIGHTS[name] for name in used)
+    score = (
+        sum(value * READING_PHASE2_COMPONENT_WEIGHTS[name] for name, value in used.items())
+        / available_weight_sum
+        if available_weight_sum
+        else None
+    )
+    if score is not None:
+        score = max(0.0, min(100.0, score))
+    included_components = list(used)
+    excluded_components = [name for name, value in named.items() if value is None]
     return score, {
         **named,
+        "formula_version": SCORING_VERSION_PHASE2_V1,
+        "formula": "0.25_accuracy + 0.25_fluency + 0.20_pronunciation + 0.15_completeness + 0.15_lexical_match",
+        "component_weights": READING_PHASE2_COMPONENT_WEIGHTS,
+        "available_weight_sum": round(available_weight_sum, 4),
+        "normalized": True,
+        "included_components": included_components,
+        "excluded_components": excluded_components,
         "used_components": list(used),
         "component_count": len(used),
-        "formula": "arithmetic_mean_available_P_A_C_lexical",
     }
 
 

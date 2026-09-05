@@ -1,0 +1,416 @@
+from __future__ import annotations
+
+from dataclasses import replace
+from datetime import datetime, timezone
+from uuid import UUID, uuid4
+
+import pytest
+
+from app.assessment.application.exceptions import (
+    AttemptNotEvaluableError,
+    InvalidTemplateExercisePointsError,
+)
+from app.assessment.application.use_cases.finish_assessment_attempt import (
+    FinishAssessmentAttemptCommand,
+    FinishAssessmentAttemptUseCase,
+)
+from app.assessment.domain.attempt import AssessmentAttempt, ExerciseAttempt
+from app.assessment.domain.enums import (
+    AttemptStatus,
+    ExerciseAttemptStatus,
+    ExerciseType,
+    TechnicalStatus,
+)
+from app.assessment.domain.exercise import AssessmentExercise
+from app.assessment.domain.metrics import AssessmentResult, ExerciseScore
+from app.assessment.domain.technical_quality import calculate_reading_score
+from app.assessment.domain.template import AssessmentTemplateExercise
+from app.assessment.domain.writing_text_comparison import (
+    calculate_similarity_score,
+    determine_writing_review,
+)
+
+
+def test_reading_score_phase2_all_components_present():
+    score, components = calculate_reading_score(
+        accuracy_score=80,
+        fluency_score=60,
+        pronunciation_score=90,
+        completeness_score=100,
+        lexical_match=70,
+    )
+
+    expected = 0.25 * 80 + 0.25 * 60 + 0.20 * 90 + 0.15 * 100 + 0.15 * 70
+    assert score == pytest.approx(expected)
+    assert components["formula_version"] == "phase2_v1"
+    assert components["available_weight_sum"] == 1.0
+    assert components["included_components"] == [
+        "accuracy_score",
+        "fluency_score",
+        "pronunciation_score",
+        "completeness_score",
+        "lexical_match",
+    ]
+
+
+def test_reading_score_phase2_missing_lexical_renormalizes():
+    score, components = calculate_reading_score(
+        accuracy_score=80,
+        fluency_score=60,
+        pronunciation_score=90,
+        completeness_score=100,
+        lexical_match=None,
+    )
+
+    expected = (0.25 * 80 + 0.25 * 60 + 0.20 * 90 + 0.15 * 100) / 0.85
+    assert score == pytest.approx(expected)
+    assert components["available_weight_sum"] == 0.85
+    assert components["excluded_components"] == ["lexical_match"]
+
+
+def test_reading_score_phase2_missing_fluency_renormalizes():
+    score, components = calculate_reading_score(
+        accuracy_score=80,
+        fluency_score=None,
+        pronunciation_score=90,
+        completeness_score=100,
+        lexical_match=70,
+    )
+
+    expected = (0.25 * 80 + 0.20 * 90 + 0.15 * 100 + 0.15 * 70) / 0.75
+    assert score == pytest.approx(expected)
+    assert components["available_weight_sum"] == 0.75
+    assert components["excluded_components"] == ["fluency_score"]
+
+
+def test_reading_score_phase2_all_none_returns_none():
+    score, components = calculate_reading_score(
+        accuracy_score=None,
+        fluency_score=None,
+        pronunciation_score=None,
+        completeness_score=None,
+        lexical_match=None,
+    )
+
+    assert score is None
+    assert components["available_weight_sum"] == 0
+    assert components["included_components"] == []
+
+
+def test_reading_score_phase2_fluency_participates():
+    low_fluency, _ = calculate_reading_score(
+        accuracy_score=80,
+        fluency_score=20,
+        pronunciation_score=80,
+        completeness_score=80,
+        lexical_match=80,
+    )
+    high_fluency, _ = calculate_reading_score(
+        accuracy_score=80,
+        fluency_score=100,
+        pronunciation_score=80,
+        completeness_score=80,
+        lexical_match=80,
+    )
+
+    assert high_fluency > low_fluency
+
+
+def test_writing_score_keeps_75_25_formula():
+    assert calculate_similarity_score(cer=0.20, wer=0.50) == 72.5
+
+
+def test_writing_ocr_confidence_does_not_change_numeric_score():
+    high_confidence = determine_writing_review("El gato duerme.", "El gato duerme.", confidence_avg=0.95)
+    low_confidence = determine_writing_review("El gato duerme.", "El gato duerme.", confidence_avg=0.50)
+
+    assert high_confidence.similarity_score == low_confidence.similarity_score == 100.0
+    assert low_confidence.review_required is True
+
+
+@pytest.mark.parametrize("points", [1, 2, 3])
+def test_attach_exercise_accepts_phase2_points(client, teacher_headers, points):
+    template_id, exercise_id = _create_template_and_mc_exercise(client, teacher_headers)
+
+    response = client.post(
+        f"/api/v1/assessments/templates/{template_id}/exercises",
+        headers=teacher_headers,
+        json={"exercise_id": exercise_id, "order_index": 1, "points": points, "is_required": True},
+    )
+
+    assert response.status_code == 201
+
+
+@pytest.mark.parametrize("points", [0, -1, 4])
+def test_attach_exercise_rejects_invalid_phase2_points(client, teacher_headers, points):
+    template_id, exercise_id = _create_template_and_mc_exercise(client, teacher_headers)
+
+    response = client.post(
+        f"/api/v1/assessments/templates/{template_id}/exercises",
+        headers=teacher_headers,
+        json={"exercise_id": exercise_id, "order_index": 1, "points": points, "is_required": True},
+    )
+
+    assert response.status_code == 422
+
+
+def test_attach_exercise_default_points_is_valid(client, teacher_headers):
+    template_id, exercise_id = _create_template_and_mc_exercise(client, teacher_headers)
+
+    response = client.post(
+        f"/api/v1/assessments/templates/{template_id}/exercises",
+        headers=teacher_headers,
+        json={"exercise_id": exercise_id, "order_index": 1, "is_required": True},
+    )
+
+    assert response.status_code == 201
+
+
+def test_final_score_uses_weighted_points_and_snapshot_traceability():
+    uc = _finish_use_case(
+        [
+            _row(ExerciseType.MULTIPLE_CHOICE, score=100, points=1),
+            _row(ExerciseType.MULTIPLE_CHOICE, score=100, points=2),
+            _row(ExerciseType.ORDER_SYLLABLES, score=100, points=2),
+            _row(ExerciseType.READING_SPEAKING, score=40, points=3),
+            _row(ExerciseType.READING_WRITING, score=40, points=3),
+        ]
+    )
+
+    result = uc.execute(FinishAssessmentAttemptCommand(attempt_id=uc.attempt_id))
+
+    assert result.final_score == 67.27
+    assert result.score_denominator == 11
+    assert result.max_score == 100.0
+    row = result.scoring_snapshot_json[0]
+    assert row["scoring_version"] == "phase2_v1"
+    assert row["points"] == 1
+    assert row["weighted_contribution"] == 100
+    assert row["effective_weight"] == 1
+    assert row["included_weight_sum"] == 11
+    assert row["coverage_weight_percentage"] == 100.0
+    assert row["final_scoring_formula"] == "weighted_mean_by_template_exercise_points"
+    assert row["intervention_level_status"] == "provisional"
+
+
+def test_optional_invalid_is_excluded_and_lowers_weight_coverage():
+    uc = _finish_use_case(
+        [
+            _row(ExerciseType.MULTIPLE_CHOICE, score=100, points=3, is_required=True),
+            _row(
+                ExerciseType.READING_WRITING,
+                score=None,
+                points=3,
+                is_required=False,
+                score_eligible=False,
+                technical_status=TechnicalStatus.INVALID,
+            ),
+        ]
+    )
+
+    result = uc.execute(FinishAssessmentAttemptCommand(attempt_id=uc.attempt_id))
+
+    assert result.final_score == 100.0
+    assert result.score_denominator == 3
+    assert result.evaluated_exercises == 1
+    excluded = next(row for row in result.scoring_snapshot_json if not row["included"])
+    assert excluded["exclusion_reason"] == "NOT_SCORE_ELIGIBLE"
+    assert excluded["included_weight_sum"] == 3
+    assert excluded["total_template_weight_sum"] == 6
+    assert excluded["coverage_weight_percentage"] == 50.0
+    assert excluded["invalid_or_excluded_exercise_count"] == 1
+
+
+def test_required_invalid_blocks_final_score():
+    uc = _finish_use_case(
+        [
+            _row(
+                ExerciseType.MULTIPLE_CHOICE,
+                score=None,
+                points=2,
+                is_required=True,
+                score_eligible=False,
+                technical_status=TechnicalStatus.INVALID,
+            )
+        ]
+    )
+
+    with pytest.raises(AttemptNotEvaluableError):
+        uc.execute(FinishAssessmentAttemptCommand(attempt_id=uc.attempt_id))
+
+
+def test_legacy_points_are_rejected_before_final_score():
+    uc = _finish_use_case([_row(ExerciseType.MULTIPLE_CHOICE, score=100, points=10)])
+
+    with pytest.raises(InvalidTemplateExercisePointsError):
+        uc.execute(FinishAssessmentAttemptCommand(attempt_id=uc.attempt_id))
+
+
+def _create_template_and_mc_exercise(client, headers) -> tuple[str, str]:
+    template = client.post(
+        "/api/v1/assessments/templates",
+        headers=headers,
+        json={"name": "Phase 2 template", "version": 1},
+    ).json()
+    exercise = client.post(
+        "/api/v1/assessments/exercises",
+        headers=headers,
+        json={
+            "type": "MULTIPLE_CHOICE",
+            "title": "MC phase 2",
+            "mc_question": {
+                "question_text": "Q?",
+                "options": [{"text": "A", "is_correct": True, "order_index": 1}],
+            },
+        },
+    ).json()
+    return template["template_id"], exercise["exercise_id"]
+
+
+def _row(
+    exercise_type: ExerciseType,
+    *,
+    score: float | None,
+    points: int,
+    is_required: bool = True,
+    score_eligible: bool = True,
+    technical_status: TechnicalStatus = TechnicalStatus.VALID,
+) -> dict:
+    return {
+        "exercise_attempt_id": uuid4(),
+        "template_exercise_id": uuid4(),
+        "exercise_id": uuid4(),
+        "exercise_type": exercise_type,
+        "score": score,
+        "points": points,
+        "is_required": is_required,
+        "score_eligible": score_eligible,
+        "technical_status": technical_status,
+    }
+
+
+def _finish_use_case(rows: list[dict]) -> FinishAssessmentAttemptUseCase:
+    now = datetime.now(timezone.utc)
+    attempt_id = uuid4()
+    attempt = AssessmentAttempt(
+        id=attempt_id,
+        assessment_id=uuid4(),
+        student_id=uuid4(),
+        status=AttemptStatus.IN_PROGRESS,
+        started_at=now,
+        completed_at=None,
+        created_at=now,
+        updated_at=now,
+    )
+    exercise_attempts = []
+    template_exercises = {}
+    exercises = {}
+    scores = []
+
+    for index, row in enumerate(rows, start=1):
+        exercise_attempts.append(
+            ExerciseAttempt(
+                id=row["exercise_attempt_id"],
+                assessment_attempt_id=attempt_id,
+                template_exercise_id=row["template_exercise_id"],
+                status=ExerciseAttemptStatus.EVALUATED,
+                started_at=now,
+                submitted_at=now,
+                created_at=now,
+                updated_at=now,
+            )
+        )
+        template_exercises[row["template_exercise_id"]] = AssessmentTemplateExercise(
+            id=row["template_exercise_id"],
+            template_id=uuid4(),
+            exercise_id=row["exercise_id"],
+            order_index=index,
+            points=row["points"],
+            is_required=row["is_required"],
+            created_at=now,
+            updated_at=now,
+        )
+        exercises[row["exercise_id"]] = AssessmentExercise(
+            id=row["exercise_id"],
+            type=row["exercise_type"],
+            title=f"Exercise {index}",
+            instructions=None,
+            stimulus_type=None,
+            response_type=None,
+            difficulty_level=None,
+            is_active=True,
+            created_by_teacher_id=None,
+            created_at=now,
+            updated_at=now,
+        )
+        scores.append(
+            ExerciseScore(
+                id=uuid4(),
+                exercise_attempt_id=row["exercise_attempt_id"],
+                exercise_type=row["exercise_type"],
+                score=row["score"],
+                score_eligible=row["score_eligible"],
+                technical_status=row["technical_status"],
+                manual_review_required=False,
+                quality_reasons=[],
+                scoring_components={"is_correct": row["score"] == 100},
+                created_at=now,
+                updated_at=now,
+            )
+        )
+
+    uc = FinishAssessmentAttemptUseCase(
+        attempt_repo=_AttemptRepo(attempt),
+        exercise_attempt_repo=_ExerciseAttemptRepo(exercise_attempts),
+        template_exercise_repo=_ByIdRepo(template_exercises),
+        exercise_repo=_ByIdRepo(exercises),
+        exercise_score_repo=_ScoreRepo(scores),
+        result_repo=_ResultRepo(),
+    )
+    uc.attempt_id = attempt_id
+    return uc
+
+
+class _AttemptRepo:
+    def __init__(self, attempt: AssessmentAttempt) -> None:
+        self.attempt = attempt
+
+    def find_by_id(self, attempt_id: UUID) -> AssessmentAttempt | None:
+        return self.attempt if self.attempt.id == attempt_id else None
+
+    def update(self, attempt: AssessmentAttempt) -> AssessmentAttempt:
+        self.attempt = replace(attempt)
+        return attempt
+
+
+class _ExerciseAttemptRepo:
+    def __init__(self, exercise_attempts: list[ExerciseAttempt]) -> None:
+        self.exercise_attempts = exercise_attempts
+
+    def find_by_assessment_attempt_id(self, attempt_id: UUID) -> list[ExerciseAttempt]:
+        return [
+            exercise_attempt
+            for exercise_attempt in self.exercise_attempts
+            if exercise_attempt.assessment_attempt_id == attempt_id
+        ]
+
+
+class _ByIdRepo:
+    def __init__(self, items: dict[UUID, object]) -> None:
+        self.items = items
+
+    def find_by_id(self, item_id: UUID):
+        return self.items.get(item_id)
+
+
+class _ScoreRepo:
+    def __init__(self, scores: list[ExerciseScore]) -> None:
+        self.scores = scores
+
+    def find_by_assessment_attempt_id(self, attempt_id: UUID) -> list[ExerciseScore]:
+        return self.scores
+
+
+class _ResultRepo:
+    def create(self, result: AssessmentResult) -> AssessmentResult:
+        return result

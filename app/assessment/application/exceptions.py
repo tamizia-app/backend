@@ -91,3 +91,9 @@ class ExpectedTextNotFoundError(AssessmentException):
     def __init__(self, detail: str = "Expected text not found for this exercise.") -> None:
         self.status_code = 400
         self.detail = detail
+
+
+class InvalidTemplateExercisePointsError(AssessmentException):
+    def __init__(self, detail: str = "Template exercise points must be 1, 2, or 3.") -> None:
+        self.status_code = 400
+        self.detail = detail

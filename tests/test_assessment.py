@@ -343,7 +343,7 @@ def test_attach_exercise_to_template(client, teacher_headers):
     response = client.post(
         f"/api/v1/assessments/templates/{template_id}/exercises",
         headers=teacher_headers,
-        json={"exercise_id": exercise_id, "order_index": 1, "points": 10, "is_required": True},
+        json={"exercise_id": exercise_id, "order_index": 1, "points": 2, "is_required": True},
     )
     assert response.status_code == 201
     assert response.json()["detail"] == "Exercise attached to template successfully."
@@ -374,7 +374,7 @@ def test_create_assessment(client, teacher_headers, classroom_id):
     client.post(
         f"/api/v1/assessments/templates/{template_id}/exercises",
         headers=teacher_headers,
-        json={"exercise_id": exercise_id, "order_index": 1, "points": 10, "is_required": True},
+        json={"exercise_id": exercise_id, "order_index": 1, "points": 2, "is_required": True},
     )
 
     response = client.post(
@@ -430,7 +430,7 @@ def test_start_attempt_creates_exercise_attempts(client, teacher_headers, classr
         client.post(
             f"/api/v1/assessments/templates/{template_id}/exercises",
             headers=teacher_headers,
-            json={"exercise_id": ex_id, "order_index": idx, "points": 10, "is_required": True},
+            json={"exercise_id": ex_id, "order_index": idx, "points": 2, "is_required": True},
         )
 
     asm = client.post(
@@ -484,7 +484,7 @@ def test_submit_mc_response(client, teacher_headers, classroom_id, student_id):
     client.post(
         f"/api/v1/assessments/templates/{template_id}/exercises",
         headers=teacher_headers,
-        json={"exercise_id": exercise_id, "order_index": 1, "points": 10, "is_required": True},
+        json={"exercise_id": exercise_id, "order_index": 1, "points": 2, "is_required": True},
     )
 
     asm = client.post(
@@ -546,7 +546,7 @@ def test_submit_os_response(client, teacher_headers, classroom_id, student_id):
     client.post(
         f"/api/v1/assessments/templates/{template_id}/exercises",
         headers=teacher_headers,
-        json={"exercise_id": exercise_id, "order_index": 1, "points": 10, "is_required": True},
+        json={"exercise_id": exercise_id, "order_index": 1, "points": 2, "is_required": True},
     )
 
     asm = client.post(
@@ -626,7 +626,7 @@ def test_upload_speaking_response(client, teacher_headers, classroom_id, student
     client.post(
         f"/api/v1/assessments/templates/{template_id}/exercises",
         headers=teacher_headers,
-        json={"exercise_id": exercise_id, "order_index": 1, "points": 10, "is_required": True},
+        json={"exercise_id": exercise_id, "order_index": 1, "points": 2, "is_required": True},
     )
 
     asm = client.post(
@@ -671,7 +671,7 @@ def test_upload_speaking_response(client, teacher_headers, classroom_id, student
     ).json()
     assert saved["comparison"] == data["comparison"]
     assert saved["review"] == data["review"]
-    assert saved["exercise_score"] == data["exercise_score"] == 90.0
+    assert saved["exercise_score"] == data["exercise_score"] == 88.75
 
     finished = client.post(
         f"/api/v1/assessments/attempts/{att['attempt_id']}/finish",
@@ -681,9 +681,9 @@ def test_upload_speaking_response(client, teacher_headers, classroom_id, student
         f"/api/v1/assessments/attempts/{att['attempt_id']}/review",
         headers=teacher_headers,
     ).json()
-    assert finished["final_score"] == 90.0
-    assert finished["scoring_snapshot"][0]["score"] == 90.0
-    assert reviewed["exercise_reviews"][0]["score"] == 90.0
+    assert finished["final_score"] == 88.75
+    assert finished["scoring_snapshot"][0]["score"] == 88.75
+    assert reviewed["exercise_reviews"][0]["score"] == 88.75
     immutable_audio = client.post(
         f"/api/v1/assessments/exercise-attempts/{ea_id}/speaking-response",
         headers=teacher_headers,
@@ -727,7 +727,7 @@ def _create_speaking_setup(client, teacher_headers, classroom_id, student_id, ex
     client.post(
         f"/api/v1/assessments/templates/{template_id}/exercises",
         headers=teacher_headers,
-        json={"exercise_id": exercise_id, "order_index": 1, "points": 10, "is_required": True},
+        json={"exercise_id": exercise_id, "order_index": 1, "points": 2, "is_required": True},
     )
 
     asm = client.post(
@@ -1023,7 +1023,7 @@ def test_upload_speaking_response_uses_language_code_from_prompt(client, teacher
     client.post(
         f"/api/v1/assessments/templates/{template_id}/exercises",
         headers=teacher_headers,
-        json={"exercise_id": exercise_id, "order_index": 1, "points": 10, "is_required": True},
+        json={"exercise_id": exercise_id, "order_index": 1, "points": 2, "is_required": True},
     )
 
     asm = client.post(
@@ -1158,7 +1158,7 @@ def test_finish_attempt_and_get_result(client, teacher_headers, classroom_id, st
     client.post(
         f"/api/v1/assessments/templates/{template_id}/exercises",
         headers=teacher_headers,
-        json={"exercise_id": exercise_id, "order_index": 1, "points": 10, "is_required": True},
+        json={"exercise_id": exercise_id, "order_index": 1, "points": 2, "is_required": True},
     )
 
     asm = client.post(
@@ -1294,7 +1294,7 @@ def test_create_attempt_returns_exercise_attempts(client, teacher_headers, class
     client.post(
         f"/api/v1/assessments/templates/{template_id}/exercises",
         headers=teacher_headers,
-        json={"exercise_id": ex1, "order_index": 1, "points": 10, "is_required": True},
+        json={"exercise_id": ex1, "order_index": 1, "points": 2, "is_required": True},
     )
 
     asm = client.post(
@@ -1342,7 +1342,7 @@ def test_get_attempt_detail_includes_exercise_data(client, teacher_headers, clas
     client.post(
         f"/api/v1/assessments/templates/{template_id}/exercises",
         headers=teacher_headers,
-        json={"exercise_id": exercise_id, "order_index": 2, "points": 5, "is_required": False},
+        json={"exercise_id": exercise_id, "order_index": 2, "points": 3, "is_required": False},
     )
 
     asm = client.post(
@@ -1372,7 +1372,7 @@ def test_get_attempt_detail_includes_exercise_data(client, teacher_headers, clas
     assert ex["title"] == "MC Detail"
     assert ex["instructions"] == "Pick one"
     assert ex["order_index"] == 2
-    assert ex["points"] == 5
+    assert ex["points"] == 3
     assert ex["is_required"] == False
 
 
@@ -1399,7 +1399,7 @@ def test_list_attempts_by_assessment(client, teacher_headers, classroom_id, stud
     client.post(
         f"/api/v1/assessments/templates/{template_id}/exercises",
         headers=teacher_headers,
-        json={"exercise_id": exercise_id, "order_index": 1, "points": 10, "is_required": True},
+        json={"exercise_id": exercise_id, "order_index": 1, "points": 2, "is_required": True},
     )
 
     asm = client.post(
@@ -1450,7 +1450,7 @@ def test_list_attempts_filter_by_student(client, teacher_headers, classroom_id, 
     client.post(
         f"/api/v1/assessments/templates/{template_id}/exercises",
         headers=teacher_headers,
-        json={"exercise_id": ex_resp["exercise_id"], "order_index": 1, "points": 10, "is_required": True},
+        json={"exercise_id": ex_resp["exercise_id"], "order_index": 1, "points": 2, "is_required": True},
     )
 
     asm = client.post(
@@ -1519,7 +1519,7 @@ def test_get_speaking_response_returns_saved_data(client, teacher_headers, class
     client.post(
         f"/api/v1/assessments/templates/{template_id}/exercises",
         headers=teacher_headers,
-        json={"exercise_id": exercise_id, "order_index": 1, "points": 10, "is_required": True},
+        json={"exercise_id": exercise_id, "order_index": 1, "points": 2, "is_required": True},
     )
 
     asm = client.post(
@@ -1613,7 +1613,7 @@ def test_get_attempt_detail_returns_mc_question_without_is_correct(client, teach
     client.post(
         f"/api/v1/assessments/templates/{template_id}/exercises",
         headers=teacher_headers,
-        json={"exercise_id": exercise_id, "order_index": 1, "points": 10, "is_required": True},
+        json={"exercise_id": exercise_id, "order_index": 1, "points": 2, "is_required": True},
     )
 
     asm = client.post(
@@ -1674,7 +1674,7 @@ def test_get_attempt_detail_returns_os_question_without_correct_word(client, tea
     client.post(
         f"/api/v1/assessments/templates/{template_id}/exercises",
         headers=teacher_headers,
-        json={"exercise_id": exercise_id, "order_index": 1, "points": 10, "is_required": True},
+        json={"exercise_id": exercise_id, "order_index": 1, "points": 2, "is_required": True},
     )
 
     asm = client.post(
@@ -1731,7 +1731,7 @@ def test_submit_mc_incorrect(client, teacher_headers, classroom_id, student_id):
     client.post(
         f"/api/v1/assessments/templates/{template_id}/exercises",
         headers=teacher_headers,
-        json={"exercise_id": exercise_id, "order_index": 1, "points": 10, "is_required": True},
+        json={"exercise_id": exercise_id, "order_index": 1, "points": 2, "is_required": True},
     )
 
     asm = client.post(
@@ -1790,7 +1790,7 @@ def test_submit_os_incorrect(client, teacher_headers, classroom_id, student_id):
     client.post(
         f"/api/v1/assessments/templates/{template_id}/exercises",
         headers=teacher_headers,
-        json={"exercise_id": exercise_id, "order_index": 1, "points": 10, "is_required": True},
+        json={"exercise_id": exercise_id, "order_index": 1, "points": 2, "is_required": True},
     )
 
     asm = client.post(
@@ -1842,7 +1842,7 @@ def test_mc_response_sets_answered_and_submitted_at(client, teacher_headers, cla
     client.post(
         f"/api/v1/assessments/templates/{template_id}/exercises",
         headers=teacher_headers,
-        json={"exercise_id": ex_resp["exercise_id"], "order_index": 1, "points": 10, "is_required": True},
+        json={"exercise_id": ex_resp["exercise_id"], "order_index": 1, "points": 2, "is_required": True},
     )
 
     asm = client.post(
@@ -1904,7 +1904,7 @@ def test_os_response_sets_answered_and_submitted_at(client, teacher_headers, cla
     client.post(
         f"/api/v1/assessments/templates/{template_id}/exercises",
         headers=teacher_headers,
-        json={"exercise_id": ex_resp["exercise_id"], "order_index": 1, "points": 10, "is_required": True},
+        json={"exercise_id": ex_resp["exercise_id"], "order_index": 1, "points": 2, "is_required": True},
     )
 
     asm = client.post(
@@ -1963,7 +1963,7 @@ def test_mc_reattempt_overwrites_previous(client, teacher_headers, classroom_id,
     client.post(
         f"/api/v1/assessments/templates/{template_id}/exercises",
         headers=teacher_headers,
-        json={"exercise_id": ex_resp["exercise_id"], "order_index": 1, "points": 10, "is_required": True},
+        json={"exercise_id": ex_resp["exercise_id"], "order_index": 1, "points": 2, "is_required": True},
     )
 
     asm = client.post(
@@ -2035,7 +2035,7 @@ def test_os_reattempt_overwrites_previous(client, teacher_headers, classroom_id,
     client.post(
         f"/api/v1/assessments/templates/{template_id}/exercises",
         headers=teacher_headers,
-        json={"exercise_id": ex_resp["exercise_id"], "order_index": 1, "points": 10, "is_required": True},
+        json={"exercise_id": ex_resp["exercise_id"], "order_index": 1, "points": 2, "is_required": True},
     )
 
     asm = client.post(
@@ -2152,7 +2152,7 @@ def test_finish_mixed_assessment_mc_os_speaking(client, teacher_headers, classro
         client.post(
             f"/api/v1/assessments/templates/{template_id}/exercises",
             headers=teacher_headers,
-            json={"exercise_id": ex_id, "order_index": idx, "points": 10, "is_required": True},
+            json={"exercise_id": ex_id, "order_index": idx, "points": 2, "is_required": True},
         )
 
     asm = client.post(
@@ -2234,7 +2234,7 @@ def test_finish_with_pending_required_exercise_returns_409(client, teacher_heade
     client.post(
         f"/api/v1/assessments/templates/{template_id}/exercises",
         headers=teacher_headers,
-        json={"exercise_id": ex_resp["exercise_id"], "order_index": 1, "points": 10, "is_required": True},
+        json={"exercise_id": ex_resp["exercise_id"], "order_index": 1, "points": 2, "is_required": True},
     )
 
     asm = client.post(
@@ -2307,7 +2307,7 @@ def test_get_result_mixed_assessment_returns_correct_computed_fields(client, tea
         client.post(
             f"/api/v1/assessments/templates/{template_id}/exercises",
             headers=teacher_headers,
-            json={"exercise_id": ex_id, "order_index": idx, "points": 10, "is_required": True},
+            json={"exercise_id": ex_id, "order_index": idx, "points": 2, "is_required": True},
         )
 
     asm = client.post(
@@ -2395,7 +2395,7 @@ def test_get_mc_response_returns_saved_data(client, teacher_headers, classroom_i
     client.post(
         f"/api/v1/assessments/templates/{template_id}/exercises",
         headers=teacher_headers,
-        json={"exercise_id": ex["exercise_id"], "order_index": 1, "points": 10, "is_required": True},
+        json={"exercise_id": ex["exercise_id"], "order_index": 1, "points": 2, "is_required": True},
     )
 
     asm = client.post(
@@ -2451,7 +2451,7 @@ def test_get_os_response_returns_saved_data(client, teacher_headers, classroom_i
     client.post(
         f"/api/v1/assessments/templates/{template_id}/exercises",
         headers=teacher_headers,
-        json={"exercise_id": ex["exercise_id"], "order_index": 1, "points": 10, "is_required": True},
+        json={"exercise_id": ex["exercise_id"], "order_index": 1, "points": 2, "is_required": True},
     )
 
     asm = client.post(
@@ -2623,7 +2623,7 @@ def test_get_attempt_detail_returns_mc_image_blob_path_and_url(client, teacher_h
     client.post(
         f"/api/v1/assessments/templates/{template_id}/exercises",
         headers=teacher_headers,
-        json={"exercise_id": exercise_id, "order_index": 1, "points": 10, "is_required": True},
+        json={"exercise_id": exercise_id, "order_index": 1, "points": 2, "is_required": True},
     )
 
     asm = client.post(
@@ -2728,7 +2728,7 @@ def _create_writing_setup(client, teacher_headers, classroom_id, student_id, exe
     client.post(
         f"/api/v1/assessments/templates/{template_id}/exercises",
         headers=teacher_headers,
-        json={"exercise_id": exercise_id, "order_index": 1, "points": 10, "is_required": True},
+        json={"exercise_id": exercise_id, "order_index": 1, "points": 2, "is_required": True},
     )
 
     asm = client.post(
@@ -3028,7 +3028,7 @@ def test_finish_mixed_with_required_invalid_writing_is_not_evaluable(client, tea
         client.post(
             f"/api/v1/assessments/templates/{template_id}/exercises",
             headers=teacher_headers,
-            json={"exercise_id": ex_id, "order_index": idx, "points": 10, "is_required": True},
+            json={"exercise_id": ex_id, "order_index": idx, "points": 2, "is_required": True},
         )
 
     asm = client.post(
@@ -3112,7 +3112,7 @@ def test_upload_writing_wrong_exercise_type_returns_400(client, teacher_headers,
     client.post(
         f"/api/v1/assessments/templates/{template_id}/exercises",
         headers=teacher_headers,
-        json={"exercise_id": ex_resp["exercise_id"], "order_index": 1, "points": 10, "is_required": True},
+        json={"exercise_id": ex_resp["exercise_id"], "order_index": 1, "points": 2, "is_required": True},
     )
 
     asm = client.post(
@@ -3816,7 +3816,7 @@ def test_finish_mixed_with_writing_enters_average(client, teacher_headers, class
             client.post(
                 f"/api/v1/assessments/templates/{template_id}/exercises",
                 headers=teacher_headers,
-                json={"exercise_id": ex_id, "order_index": idx, "points": 10, "is_required": True},
+                json={"exercise_id": ex_id, "order_index": idx, "points": 2, "is_required": True},
             )
 
         asm = client.post(
@@ -3870,11 +3870,10 @@ def test_finish_mixed_with_writing_enters_average(client, teacher_headers, class
         finish = client.post(f"/api/v1/assessments/attempts/{attempt_id}/finish", headers=teacher_headers)
         assert finish.status_code == 200
         data = finish.json()
-        # MC=100, OS=100, Speaking=100, Writing=86.35
-        # avg = (100+100+100+86.35) / 4 = 386.35 / 4 = 96.59 (rounded)
+        # Equal Phase 2 weights preserve the old average while denominator is sum(points).
         assert data["final_score"] == 96.59
         assert data["max_score"] == 100.0
-        assert data["score_denominator"] == 4
+        assert data["score_denominator"] == 8
         assert data["writing_average_score"] == 86.35
         assert data["writing_completed_count"] == 1
         assert data["writing_review_required_count"] == 0
@@ -4212,7 +4211,7 @@ def test_history_returns_student_info_and_chart_points(client, teacher_headers, 
         "mc_question": {"question_text": "Q?", "options": [{"text": "A", "is_correct": True, "order_index": 1}]},
     }).json()
     client.post(f"/api/v1/assessments/templates/{template_id}/exercises", headers=teacher_headers,
-                json={"exercise_id": ex["exercise_id"], "order_index": 1, "points": 10, "is_required": True})
+                json={"exercise_id": ex["exercise_id"], "order_index": 1, "points": 2, "is_required": True})
     asm = client.post("/api/v1/assessments", headers=teacher_headers,
                       json={"template_id": template_id, "classroom_id": str(classroom_id)}).json()
     att = client.post(f"/api/v1/assessments/{asm['assessment_id']}/attempts", headers=teacher_headers,
@@ -4267,7 +4266,7 @@ def test_list_student_attempts(client, teacher_headers, classroom_id, student_id
         "mc_question": {"question_text": "Q?", "options": [{"text": "A", "is_correct": True, "order_index": 1}]},
     }).json()
     client.post(f"/api/v1/assessments/templates/{tmpl['template_id']}/exercises", headers=teacher_headers,
-                json={"exercise_id": ex["exercise_id"], "order_index": 1, "points": 10, "is_required": True})
+                json={"exercise_id": ex["exercise_id"], "order_index": 1, "points": 2, "is_required": True})
     asm = client.post("/api/v1/assessments", headers=teacher_headers,
                       json={"template_id": tmpl["template_id"], "classroom_id": str(classroom_id)}).json()
     att = client.post(f"/api/v1/assessments/{asm['assessment_id']}/attempts", headers=teacher_headers,
@@ -4292,7 +4291,7 @@ def test_list_student_attempts_filter_by_status(client, teacher_headers, classro
         "mc_question": {"question_text": "Q?", "options": [{"text": "A", "is_correct": True, "order_index": 1}]},
     }).json()
     client.post(f"/api/v1/assessments/templates/{tmpl['template_id']}/exercises", headers=teacher_headers,
-                json={"exercise_id": ex["exercise_id"], "order_index": 1, "points": 10, "is_required": True})
+                json={"exercise_id": ex["exercise_id"], "order_index": 1, "points": 2, "is_required": True})
     asm = client.post("/api/v1/assessments", headers=teacher_headers,
                       json={"template_id": tmpl["template_id"], "classroom_id": str(classroom_id)}).json()
     client.post(f"/api/v1/assessments/{asm['assessment_id']}/attempts", headers=teacher_headers,
@@ -4334,7 +4333,7 @@ def test_get_attempt_review_mc(client, teacher_headers, classroom_id, student_id
     }).json()
     exercise_id = ex["exercise_id"]
     client.post(f"/api/v1/assessments/templates/{template_id}/exercises", headers=teacher_headers,
-                json={"exercise_id": exercise_id, "order_index": 1, "points": 10, "is_required": True})
+                json={"exercise_id": exercise_id, "order_index": 1, "points": 2, "is_required": True})
     asm = client.post("/api/v1/assessments", headers=teacher_headers,
                       json={"template_id": template_id, "classroom_id": str(classroom_id)}).json()
     att = client.post(f"/api/v1/assessments/{asm['assessment_id']}/attempts", headers=teacher_headers,
@@ -4380,7 +4379,7 @@ def test_get_attempt_review_os(client, teacher_headers, classroom_id, student_id
         "os_question": {"question_text": "Ordena las sílabas", "correct_word": "casa", "syllables_json": ["ca", "sa"]},
     }).json()
     client.post(f"/api/v1/assessments/templates/{template_id}/exercises", headers=teacher_headers,
-                json={"exercise_id": ex["exercise_id"], "order_index": 1, "points": 10, "is_required": True})
+                json={"exercise_id": ex["exercise_id"], "order_index": 1, "points": 2, "is_required": True})
     asm = client.post("/api/v1/assessments", headers=teacher_headers,
                       json={"template_id": template_id, "classroom_id": str(classroom_id)}).json()
     att = client.post(f"/api/v1/assessments/{asm['assessment_id']}/attempts", headers=teacher_headers,
@@ -4414,7 +4413,7 @@ def test_get_attempt_review_not_finished_returns_review(client, teacher_headers,
         "mc_question": {"question_text": "Q?", "options": [{"text": "A", "is_correct": True, "order_index": 1}]},
     }).json()
     client.post(f"/api/v1/assessments/templates/{tmpl['template_id']}/exercises", headers=teacher_headers,
-                json={"exercise_id": ex["exercise_id"], "order_index": 1, "points": 10, "is_required": True})
+                json={"exercise_id": ex["exercise_id"], "order_index": 1, "points": 2, "is_required": True})
     asm = client.post("/api/v1/assessments", headers=teacher_headers,
                       json={"template_id": tmpl["template_id"], "classroom_id": str(classroom_id)}).json()
     att = client.post(f"/api/v1/assessments/{asm['assessment_id']}/attempts", headers=teacher_headers,
@@ -4436,7 +4435,7 @@ def test_get_attempt_review_teacher_isolation(client, teacher_headers, other_tea
         "mc_question": {"question_text": "Q?", "options": [{"text": "A", "is_correct": True, "order_index": 1}]},
     }).json()
     client.post(f"/api/v1/assessments/templates/{tmpl['template_id']}/exercises", headers=teacher_headers,
-                json={"exercise_id": ex["exercise_id"], "order_index": 1, "points": 10, "is_required": True})
+                json={"exercise_id": ex["exercise_id"], "order_index": 1, "points": 2, "is_required": True})
     asm = client.post("/api/v1/assessments", headers=teacher_headers,
                       json={"template_id": tmpl["template_id"], "classroom_id": str(student_id)}).json()
     # The other teacher should not see this teacher's attempt
@@ -4474,7 +4473,7 @@ def test_get_attempt_review_speaking(client, teacher_headers, classroom_id, stud
         "prompt_exercise": {"text_to_show": "El gato", "language_code": "es-PE", "expected_text": "El gato"},
     }).json()
     client.post(f"/api/v1/assessments/templates/{template_id}/exercises", headers=teacher_headers,
-                json={"exercise_id": ex["exercise_id"], "order_index": 1, "points": 10, "is_required": True})
+                json={"exercise_id": ex["exercise_id"], "order_index": 1, "points": 2, "is_required": True})
     asm = client.post("/api/v1/assessments", headers=teacher_headers,
                       json={"template_id": template_id, "classroom_id": str(classroom_id)}).json()
     att = client.post(f"/api/v1/assessments/{asm['assessment_id']}/attempts", headers=teacher_headers,
@@ -4512,7 +4511,7 @@ def test_finish_returns_exercise_summaries(client, teacher_headers, classroom_id
         "mc_question": {"question_text": "Q?", "options": [{"text": "A", "is_correct": True, "order_index": 1}]},
     }).json()
     client.post(f"/api/v1/assessments/templates/{template_id}/exercises", headers=teacher_headers,
-                json={"exercise_id": ex["exercise_id"], "order_index": 1, "points": 10, "is_required": True})
+                json={"exercise_id": ex["exercise_id"], "order_index": 1, "points": 2, "is_required": True})
     asm = client.post("/api/v1/assessments", headers=teacher_headers,
                       json={"template_id": template_id, "classroom_id": str(classroom_id)}).json()
     att = client.post(f"/api/v1/assessments/{asm['assessment_id']}/attempts", headers=teacher_headers,
@@ -4545,7 +4544,7 @@ def test_get_result_returns_exercise_summaries(client, teacher_headers, classroo
         "mc_question": {"question_text": "Q?", "options": [{"text": "A", "is_correct": True, "order_index": 1}]},
     }).json()
     client.post(f"/api/v1/assessments/templates/{tmpl['template_id']}/exercises", headers=teacher_headers,
-                json={"exercise_id": ex["exercise_id"], "order_index": 1, "points": 10, "is_required": True})
+                json={"exercise_id": ex["exercise_id"], "order_index": 1, "points": 2, "is_required": True})
     asm = client.post("/api/v1/assessments", headers=teacher_headers,
                       json={"template_id": tmpl["template_id"], "classroom_id": str(classroom_id)}).json()
     att = client.post(f"/api/v1/assessments/{asm['assessment_id']}/attempts", headers=teacher_headers,
@@ -4596,7 +4595,7 @@ def _create_single_mc_attempt(client, teacher_headers, classroom_id, student_id,
         json={
             "exercise_id": exercise["exercise_id"],
             "order_index": 1,
-            "points": 10,
+            "points": 2,
             "is_required": True,
         },
     )
@@ -4667,7 +4666,7 @@ def test_phase1_mc_option_must_belong_to_current_question(client, teacher_header
             json={
                 "exercise_id": exercise["exercise_id"],
                 "order_index": index,
-                "points": 10,
+                "points": 2,
                 "is_required": True,
             },
         )
@@ -4738,7 +4737,7 @@ def test_phase1_optional_invalid_is_excluded_with_snapshot(client, teacher_heade
             json={
                 "exercise_id": exercise["exercise_id"],
                 "order_index": index,
-                "points": 10,
+                "points": 2,
                 "is_required": required,
             },
         )
@@ -4779,7 +4778,7 @@ def test_phase1_optional_invalid_is_excluded_with_snapshot(client, teacher_heade
     payload = finished.json()
     assert payload["final_score"] == 100.0
     assert payload["intervention_level"] == "LOW"
-    assert payload["score_denominator"] == 1
+    assert payload["score_denominator"] == 2
     excluded = next(row for row in payload["scoring_snapshot"] if not row["included"])
     assert excluded["technical_status"] == "INVALID"
     assert excluded["exclusion_reason"] == "NOT_SCORE_ELIGIBLE"
@@ -4939,7 +4938,7 @@ def test_result_and_finish_exercise_summaries_consistent(client, teacher_headers
     }).json()
     for ex_id, idx in [(mc["exercise_id"], 1), (os["exercise_id"], 2), (sp["exercise_id"], 3)]:
         client.post(f"/api/v1/assessments/templates/{template_id}/exercises", headers=teacher_headers,
-                    json={"exercise_id": ex_id, "order_index": idx, "points": 10, "is_required": True})
+                    json={"exercise_id": ex_id, "order_index": idx, "points": 2, "is_required": True})
     asm = client.post("/api/v1/assessments", headers=teacher_headers,
                       json={"template_id": template_id, "classroom_id": str(classroom_id)}).json()
     att = client.post(f"/api/v1/assessments/{asm['assessment_id']}/attempts", headers=teacher_headers,
@@ -4983,3 +4982,4 @@ def test_result_and_finish_exercise_summaries_consistent(client, teacher_headers
         assert fs["score"] == gs["score"]
         assert fs["type"] == gs["type"]
         assert fs["review_required"] == gs["review_required"]
+

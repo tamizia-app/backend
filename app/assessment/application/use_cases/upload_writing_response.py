@@ -232,13 +232,18 @@ class UploadWritingResponseUseCase:
             existing_metrics.quality_json = quality.to_dict()
             self._writing_metrics_repo.update(existing_metrics)
         scoring_components = {
+            "formula_version": "phase2_v1",
+            "formula": "0.75_char_accuracy + 0.25_word_accuracy",
+            "component_weights": {
+                "char_accuracy": 0.75,
+                "word_accuracy": 0.25,
+            },
             "confidence_avg": ocr_result.confidence_avg if ocr_result else None,
             "cer": review.cer if expected_text else None,
             "wer": review.wer if expected_text else None,
             "similarity_score": candidate_score,
             "char_accuracy": review.char_accuracy if expected_text else None,
             "word_accuracy": review.word_accuracy if expected_text else None,
-            "formula": "0.75_char_accuracy_plus_0.25_word_accuracy",
         }
         if self._exercise_score_repo:
             persist_exercise_score(

@@ -2,9 +2,13 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 from uuid import UUID
 
-from app.assessment.application.exceptions import ExerciseNotFoundError, TemplateNotFoundError
+from app.assessment.application.exceptions import (
+    ExerciseNotFoundError,
+    InvalidTemplateExercisePointsError,
+    TemplateNotFoundError,
+)
 from app.assessment.application.ports.repositories import ExerciseRepository, TemplateExerciseRepository, TemplateRepository
-from app.assessment.domain.template import AssessmentTemplateExercise
+from app.assessment.domain.template import AssessmentTemplateExercise, validate_template_exercise_points
 
 
 @dataclass
@@ -35,6 +39,11 @@ class AttachExerciseToTemplateUseCase:
         exercise = self._exercise_repo.find_by_id(command.exercise_id)
         if not exercise:
             raise ExerciseNotFoundError()
+
+        try:
+            validate_template_exercise_points(command.points)
+        except ValueError as exc:
+            raise InvalidTemplateExercisePointsError(str(exc))
 
         now = datetime.now(timezone.utc)
         self._template_exercise_repo.create(

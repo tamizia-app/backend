@@ -247,6 +247,7 @@ class UploadSpeakingResponseUseCase:
         exercise_score, scoring_components = calculate_reading_score(
             pronunciation_score=pronunciation_score,
             accuracy_score=accuracy_score,
+            fluency_score=fluency_score,
             completeness_score=completeness_score,
             lexical_match=lexical_match,
         )

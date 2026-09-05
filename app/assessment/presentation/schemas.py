@@ -4,6 +4,7 @@ from uuid import UUID
 from pydantic import BaseModel, Field
 
 from app.assessment.domain.enums import ExerciseType
+from app.assessment.domain.template import DEFAULT_TEMPLATE_EXERCISE_POINTS
 
 
 class CreateTemplateRequest(BaseModel):
@@ -80,7 +81,7 @@ class ExerciseResponse(BaseModel):
 class AttachExerciseRequest(BaseModel):
     exercise_id: UUID
     order_index: int
-    points: int = 10
+    points: int = Field(default=DEFAULT_TEMPLATE_EXERCISE_POINTS, ge=1, le=3)
     is_required: bool = True
 
 
@@ -143,7 +144,7 @@ class ExerciseDetail(BaseModel):
     response_type: str | None = None
     difficulty_level: int | None = None
     order_index: int = 0
-    points: int = 0
+    points: int = DEFAULT_TEMPLATE_EXERCISE_POINTS
     is_required: bool = True
     prompt_exercise: PromptExerciseSchema | None = None
     mc_question: MCQuestionSchema | None = None
