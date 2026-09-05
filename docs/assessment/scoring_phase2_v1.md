@@ -53,13 +53,15 @@ FinalScore = sum(score_i * points_i) / sum(points_i)
 
 Only exercises with a canonical ExerciseScore, `score_eligible = true`, and a non-null score enter the calculation. Required exercises without eligible scores continue to block finalization. Optional exercises without eligible scores are excluded.
 
-`score_denominator` stores the included weight sum, not the number of included exercises. `max_score` remains 100.0 and the stored final score is rounded to two decimals.
+`score_denominator` is kept only for backward compatibility and is deprecated as an ambiguous field. Starting in Phase 2 v1 it is an alias of `included_weight_sum`; it stores the sum of included exercise weights, not the number of included exercises. New clients should read `score_denominator_type = "included_weight_sum"` and `score_denominator_deprecated = true`.
+
+Use `included_exercise_count` and `total_exercise_count` for exercise counts. Use `coverage_weight_percentage` for weighted technical coverage. `max_score` remains 100.0 and the stored final score is rounded to two decimals.
 
 ## Traceability And Coverage
 
 Each snapshot row includes Phase 2 traceability: scoring version, exercise and template-exercise IDs, exercise type, order, required flag, points, inclusion/exclusion state, technical status, review flags, quality reasons, scoring components, weighted contribution and effective weight.
 
-Snapshot rows also include coverage audit fields:
+The main result response and snapshot rows include coverage audit fields:
 
 ```text
 included_weight_sum
@@ -68,9 +70,13 @@ coverage_weight_percentage
 included_exercise_count
 total_exercise_count
 invalid_or_excluded_exercise_count
+score_denominator_type
+score_denominator_deprecated
 ```
 
 `technical_status` and `score_eligible` keep technical evidence quality separate from student performance. A technically invalid sample should not be interpreted as poor student performance.
+
+If a required exercise is missing an eligible score, the attempt does not produce a global interpretable result and no partial `AssessmentResult` is created. If an optional exercise is technically invalid or not score-eligible, it is excluded from FinalScore and the lower weighted coverage is exposed in the result.
 
 ## Intervention Level
 

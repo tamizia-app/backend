@@ -2255,7 +2255,7 @@ def test_finish_with_pending_required_exercise_returns_409(client, teacher_heade
         headers=teacher_headers,
     )
     assert finish.status_code == 409
-    assert "not technically score-eligible" in finish.json()["detail"]
+    assert finish.json()["detail"]["code"] == "ASSESSMENT_NOT_INTERPRETABLE"
 
 
 def test_get_result_mixed_assessment_returns_correct_computed_fields(client, teacher_headers, classroom_id, student_id, monkeypatch):
@@ -2933,7 +2933,7 @@ def test_finish_with_required_writing_without_ocr_is_not_evaluable(client, teach
 
     finish = client.post(f"/api/v1/assessments/attempts/{attempt_id}/finish", headers=teacher_headers)
     assert finish.status_code == 409
-    assert "not technically score-eligible" in finish.json()["detail"]
+    assert finish.json()["detail"]["code"] == "ASSESSMENT_NOT_INTERPRETABLE"
 
 
 # 10. A required invalid sample blocks the definitive result.
@@ -3086,7 +3086,7 @@ def test_finish_mixed_with_required_invalid_writing_is_not_evaluable(client, tea
     # Finish
     finish = client.post(f"/api/v1/assessments/attempts/{attempt_id}/finish", headers=teacher_headers)
     assert finish.status_code == 409
-    assert "not technically score-eligible" in finish.json()["detail"]
+    assert finish.json()["detail"]["code"] == "ASSESSMENT_NOT_INTERPRETABLE"
 
 
 # 11. Upload writing on non-writing exercise returns 400
@@ -3196,7 +3196,7 @@ def test_finish_all_writing_without_eligible_score_is_not_evaluable(client, teac
 
     finish = client.post(f"/api/v1/assessments/attempts/{attempt_id}/finish", headers=teacher_headers)
     assert finish.status_code == 409
-    assert "not technically score-eligible" in finish.json()["detail"]
+    assert finish.json()["detail"]["code"] == "ASSESSMENT_NOT_INTERPRETABLE"
 
 
 # 16. WebP image is accepted
@@ -3678,7 +3678,7 @@ def test_finish_writing_only_without_similarity_is_not_evaluable(client, teacher
 
     finish = client.post(f"/api/v1/assessments/attempts/{attempt_id}/finish", headers=teacher_headers)
     assert finish.status_code == 409
-    assert "not technically score-eligible" in finish.json()["detail"]
+    assert finish.json()["detail"]["code"] == "ASSESSMENT_NOT_INTERPRETABLE"
 
 
 def test_finish_writing_with_review_sets_medium_intervention(client, teacher_headers, classroom_id, student_id, monkeypatch):

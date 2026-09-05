@@ -80,16 +80,33 @@ class FinishAssessmentAttemptUseCase:
                 blocking.append(
                     {
                         "exercise_attempt_id": str(exercise_attempt.id),
+                        "template_exercise_id": str(template_exercise.id),
+                        "exercise_id": str(exercise.id),
                         "exercise_type": exercise.type.value,
+                        "order_index": template_exercise.order_index,
                         "technical_status": score.technical_status.value if score else "INVALID",
+                        "score_eligible": score.score_eligible if score else False,
                         "quality_reasons": score.quality_reasons if score else ["MISSING_CANONICAL_SCORE"],
+                        "manual_review_required": score.manual_review_required if score else True,
                     }
                 )
 
         if blocking:
             raise AttemptNotEvaluableError(
-                "Required exercises are not technically score-eligible; repeat or review the sample: "
-                + str(blocking)
+                {
+                    "code": "ASSESSMENT_NOT_INTERPRETABLE",
+                    "message": (
+                        "La evaluación no cuenta con evidencia suficiente para generar "
+                        "un resultado global interpretable."
+                    ),
+                    "reason": "required_exercise_not_eligible",
+                    "scoring_version": SCORING_VERSION_PHASE2_V1,
+                    "blocking_required_exercises": blocking,
+                    "recommendation": (
+                        "Aplicar una forma equivalente de la batería en lugar de repetir "
+                        "exactamente la misma plantilla."
+                    ),
+                }
             )
 
         included_rows = [
@@ -255,6 +272,8 @@ class FinishAssessmentAttemptUseCase:
             "total_exercise_count": total_exercise_count,
             "invalid_or_excluded_exercise_count": total_exercise_count - included_exercise_count,
             "coverage_weight_percentage": coverage_weight_percentage,
+            "score_denominator_type": "included_weight_sum",
+            "score_denominator_deprecated": True,
             "intervention_level_status": "provisional",
         }
 

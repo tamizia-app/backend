@@ -329,6 +329,16 @@ class AssessmentResultResponse(BaseModel):
     writing_review_required_count: int = 0
     exercise_summaries: list[ExerciseSummary] = []
     score_denominator: int = 0
+    scoring_version: str = "phase2_v1"
+    final_scoring_formula: str = "weighted_mean_by_template_exercise_points"
+    included_weight_sum: float = 0
+    total_template_weight_sum: float = 0
+    coverage_weight_percentage: float = 0
+    included_exercise_count: int = 0
+    total_exercise_count: int = 0
+    invalid_or_excluded_exercise_count: int = 0
+    score_denominator_type: str = "included_weight_sum"
+    score_denominator_deprecated: bool = True
     scoring_snapshot: list[dict] = []
 
 

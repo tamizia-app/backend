@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import replace
-from datetime import datetime, timezone
+from datetime import date, datetime, timezone
 from uuid import UUID, uuid4
 
 import pytest
@@ -29,6 +29,56 @@ from app.assessment.domain.writing_text_comparison import (
     calculate_similarity_score,
     determine_writing_review,
 )
+from app.iam.infrastructure.models.user_model import UserModel
+from app.school.infrastructure.models.classroom_model import ClassroomModel
+from app.school.infrastructure.models.homeroom_teacher_model import HomeroomTeacherModel
+from app.school.infrastructure.models.student_model import Student, StudentConsent
+from conftest import TestingSessionLocal
+
+
+@pytest.fixture
+def classroom_id():
+    with TestingSessionLocal() as db:
+        teacher = (
+            db.query(HomeroomTeacherModel)
+            .join(UserModel, HomeroomTeacherModel.user_id == UserModel.id)
+            .filter(UserModel.email == "teacher@example.com")
+            .one()
+        )
+        classroom = ClassroomModel(
+            homeroom_teacher_id=teacher.id,
+            name="Phase2",
+            grade_level="primero",
+            section="A",
+            school_year=date(2026, 1, 1),
+            is_active=True,
+        )
+        db.add(classroom)
+        db.commit()
+        return classroom.id
+
+
+@pytest.fixture
+def student_id(classroom_id):
+    with TestingSessionLocal() as db:
+        student = Student(
+            classroom_id=classroom_id,
+            code="PHASE2-STUDENT",
+            age=7,
+            gender="BOY",
+            is_active=True,
+        )
+        db.add(student)
+        db.flush()
+        db.add(
+            StudentConsent(
+                student_id=student.id,
+                status=True,
+                consent_date=datetime.now(timezone.utc),
+            )
+        )
+        db.commit()
+        return student.id
 
 
 def test_reading_score_phase2_all_components_present():
@@ -246,6 +296,168 @@ def test_legacy_points_are_rejected_before_final_score():
         uc.execute(FinishAssessmentAttemptCommand(attempt_id=uc.attempt_id))
 
 
+def test_finish_get_result_and_review_expose_phase2_scoring_contract(
+    client, teacher_headers, classroom_id, student_id
+):
+    template = client.post(
+        "/api/v1/assessments/templates",
+        headers=teacher_headers,
+        json={"name": "Phase 2 API contract", "version": 1},
+    ).json()
+    first_exercise_id = _create_mc_exercise(client, teacher_headers, "MC one")
+    second_exercise_id = _create_mc_exercise(client, teacher_headers, "MC two")
+
+    for exercise_id, index, points in (
+        (first_exercise_id, 1, 1),
+        (second_exercise_id, 2, 3),
+    ):
+        response = client.post(
+            f"/api/v1/assessments/templates/{template['template_id']}/exercises",
+            headers=teacher_headers,
+            json={
+                "exercise_id": exercise_id,
+                "order_index": index,
+                "points": points,
+                "is_required": True,
+            },
+        )
+        assert response.status_code == 201
+
+    attempt_id = _start_attempt(client, teacher_headers, classroom_id, student_id, template["template_id"])
+    detail = client.get(f"/api/v1/assessments/attempts/{attempt_id}", headers=teacher_headers).json()
+    for item in detail["exercise_attempts"]:
+        option_id = item["exercise"]["mc_question"]["options"][0]["option_id"]
+        response = client.post(
+            f"/api/v1/assessments/exercise-attempts/{item['exercise_attempt_id']}/mc-response",
+            headers=teacher_headers,
+            json={"selected_option_id": option_id},
+        )
+        assert response.status_code == 200
+
+    finish = client.post(
+        f"/api/v1/assessments/attempts/{attempt_id}/finish", headers=teacher_headers
+    )
+    assert finish.status_code == 200
+    finish_payload = finish.json()
+    _assert_phase2_contract(
+        finish_payload,
+        included_weight_sum=4,
+        total_template_weight_sum=4,
+        coverage_weight_percentage=100.0,
+        included_exercise_count=2,
+        total_exercise_count=2,
+        invalid_or_excluded_exercise_count=0,
+    )
+
+    result_payload = client.get(
+        f"/api/v1/assessments/attempts/{attempt_id}/result", headers=teacher_headers
+    ).json()
+    _assert_phase2_contract(
+        result_payload,
+        included_weight_sum=4,
+        total_template_weight_sum=4,
+        coverage_weight_percentage=100.0,
+        included_exercise_count=2,
+        total_exercise_count=2,
+        invalid_or_excluded_exercise_count=0,
+    )
+
+    review_payload = client.get(
+        f"/api/v1/assessments/attempts/{attempt_id}/review", headers=teacher_headers
+    ).json()
+    _assert_phase2_contract(
+        review_payload["result"],
+        included_weight_sum=4,
+        total_template_weight_sum=4,
+        coverage_weight_percentage=100.0,
+        included_exercise_count=2,
+        total_exercise_count=2,
+        invalid_or_excluded_exercise_count=0,
+    )
+
+
+def test_optional_invalid_response_exposes_lower_phase2_coverage(
+    client, teacher_headers, classroom_id, student_id
+):
+    template = client.post(
+        "/api/v1/assessments/templates",
+        headers=teacher_headers,
+        json={"name": "Phase 2 optional coverage", "version": 1},
+    ).json()
+    required_exercise_id = _create_mc_exercise(client, teacher_headers, "Required MC")
+    optional_exercise_id = _create_mc_exercise(client, teacher_headers, "Optional MC")
+
+    for exercise_id, index, points, required in (
+        (required_exercise_id, 1, 1, True),
+        (optional_exercise_id, 2, 3, False),
+    ):
+        response = client.post(
+            f"/api/v1/assessments/templates/{template['template_id']}/exercises",
+            headers=teacher_headers,
+            json={
+                "exercise_id": exercise_id,
+                "order_index": index,
+                "points": points,
+                "is_required": required,
+            },
+        )
+        assert response.status_code == 201
+
+    attempt_id = _start_attempt(client, teacher_headers, classroom_id, student_id, template["template_id"])
+    detail = client.get(f"/api/v1/assessments/attempts/{attempt_id}", headers=teacher_headers).json()
+    required_item = detail["exercise_attempts"][0]
+    option_id = required_item["exercise"]["mc_question"]["options"][0]["option_id"]
+    client.post(
+        f"/api/v1/assessments/exercise-attempts/{required_item['exercise_attempt_id']}/mc-response",
+        headers=teacher_headers,
+        json={"selected_option_id": option_id},
+    )
+
+    finish = client.post(
+        f"/api/v1/assessments/attempts/{attempt_id}/finish", headers=teacher_headers
+    )
+    assert finish.status_code == 200
+    _assert_phase2_contract(
+        finish.json(),
+        included_weight_sum=1,
+        total_template_weight_sum=4,
+        coverage_weight_percentage=25.0,
+        included_exercise_count=1,
+        total_exercise_count=2,
+        invalid_or_excluded_exercise_count=1,
+    )
+
+
+def test_required_invalid_returns_structured_not_interpretable_error(
+    client, teacher_headers, classroom_id, student_id
+):
+    template_id, exercise_id = _create_template_and_mc_exercise(client, teacher_headers)
+    client.post(
+        f"/api/v1/assessments/templates/{template_id}/exercises",
+        headers=teacher_headers,
+        json={"exercise_id": exercise_id, "order_index": 1, "points": 2, "is_required": True},
+    )
+    attempt_id = _start_attempt(client, teacher_headers, classroom_id, student_id, template_id)
+
+    finish = client.post(
+        f"/api/v1/assessments/attempts/{attempt_id}/finish", headers=teacher_headers
+    )
+
+    assert finish.status_code == 409
+    detail = finish.json()["detail"]
+    assert detail["code"] == "ASSESSMENT_NOT_INTERPRETABLE"
+    assert detail["reason"] == "required_exercise_not_eligible"
+    assert detail["scoring_version"] == "phase2_v1"
+    assert detail["blocking_required_exercises"][0]["score_eligible"] is False
+    assert detail["blocking_required_exercises"][0]["template_exercise_id"]
+    assert "resultado global interpretable" in detail["message"]
+
+    result = client.get(
+        f"/api/v1/assessments/attempts/{attempt_id}/result", headers=teacher_headers
+    )
+    assert result.status_code == 404
+
+
 def _create_template_and_mc_exercise(client, headers) -> tuple[str, str]:
     template = client.post(
         "/api/v1/assessments/templates",
@@ -265,6 +477,60 @@ def _create_template_and_mc_exercise(client, headers) -> tuple[str, str]:
         },
     ).json()
     return template["template_id"], exercise["exercise_id"]
+
+
+def _create_mc_exercise(client, headers, title: str) -> str:
+    response = client.post(
+        "/api/v1/assessments/exercises",
+        headers=headers,
+        json={
+            "type": "MULTIPLE_CHOICE",
+            "title": title,
+            "mc_question": {
+                "question_text": "Q?",
+                "options": [{"text": "A", "is_correct": True, "order_index": 1}],
+            },
+        },
+    )
+    assert response.status_code == 201
+    return response.json()["exercise_id"]
+
+
+def _start_attempt(client, headers, classroom_id, student_id, template_id: str) -> str:
+    assessment = client.post(
+        "/api/v1/assessments",
+        headers=headers,
+        json={"template_id": template_id, "classroom_id": str(classroom_id)},
+    ).json()
+    attempt = client.post(
+        f"/api/v1/assessments/{assessment['assessment_id']}/attempts",
+        headers=headers,
+        json={"student_id": str(student_id)},
+    ).json()
+    return attempt["attempt_id"]
+
+
+def _assert_phase2_contract(
+    payload: dict,
+    *,
+    included_weight_sum: float,
+    total_template_weight_sum: float,
+    coverage_weight_percentage: float,
+    included_exercise_count: int,
+    total_exercise_count: int,
+    invalid_or_excluded_exercise_count: int,
+) -> None:
+    assert payload["scoring_version"] == "phase2_v1"
+    assert payload["final_scoring_formula"] == "weighted_mean_by_template_exercise_points"
+    assert payload["included_weight_sum"] == included_weight_sum
+    assert payload["total_template_weight_sum"] == total_template_weight_sum
+    assert payload["coverage_weight_percentage"] == coverage_weight_percentage
+    assert payload["included_exercise_count"] == included_exercise_count
+    assert payload["total_exercise_count"] == total_exercise_count
+    assert payload["invalid_or_excluded_exercise_count"] == invalid_or_excluded_exercise_count
+    assert payload["score_denominator"] == included_weight_sum
+    assert payload["score_denominator_type"] == "included_weight_sum"
+    assert payload["score_denominator_deprecated"] is True
 
 
 def _row(

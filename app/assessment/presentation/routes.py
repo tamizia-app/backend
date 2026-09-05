@@ -1,5 +1,6 @@
 from datetime import datetime
 from pathlib import Path
+from typing import Any
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, Form, HTTPException, UploadFile, status
@@ -106,6 +107,7 @@ from app.assessment.infrastructure.repositories.assessment_repositories import (
 from app.assessment.domain.enums import ExerciseType
 from app.assessment.domain.question import MCQuestion
 from app.assessment.domain.metrics import AssessmentResult as AssessmentResultDomain
+from app.assessment.domain.technical_quality import SCORING_VERSION_PHASE2_V1
 from app.assessment.domain.writing_text_comparison import char_accuracy, word_accuracy
 from app.assessment.presentation.schemas import (
     AdminExerciseDetailResponse,
@@ -201,6 +203,77 @@ MAX_AUDIO_SIZE = 20 * 1024 * 1024
 MAX_IMAGE_SIZE = 10 * 1024 * 1024
 ALLOWED_AUDIO_TYPES = {"audio/wav", "audio/mpeg", "audio/mp3", "audio/mp4", "audio/x-m4a", "audio/webm", "audio/ogg"}
 ALLOWED_IMAGE_TYPES = {"image/png", "image/jpeg", "image/jpg", "image/webp"}
+PHASE2_FINAL_SCORING_FORMULA = "weighted_mean_by_template_exercise_points"
+PHASE2_SCORE_DENOMINATOR_TYPE = "included_weight_sum"
+
+
+def _phase2_scoring_contract(
+    scoring_snapshot: list[dict] | None,
+    *,
+    score_denominator: int,
+    total_exercises: int,
+    evaluated_exercises: int,
+) -> dict[str, Any]:
+    snapshot = scoring_snapshot or []
+    meta = next((row for row in snapshot if isinstance(row, dict)), {})
+
+    included_weight_sum = _snapshot_number(
+        meta, "included_weight_sum", float(score_denominator or 0)
+    )
+    total_template_weight_sum = _snapshot_number(
+        meta, "total_template_weight_sum", included_weight_sum
+    )
+    coverage_weight_percentage = _snapshot_number(
+        meta,
+        "coverage_weight_percentage",
+        round((included_weight_sum / total_template_weight_sum) * 100, 2)
+        if total_template_weight_sum
+        else 0.0,
+    )
+    included_exercise_count = _snapshot_int(
+        meta, "included_exercise_count", evaluated_exercises
+    )
+    total_exercise_count = _snapshot_int(meta, "total_exercise_count", total_exercises)
+    invalid_or_excluded_exercise_count = _snapshot_int(
+        meta,
+        "invalid_or_excluded_exercise_count",
+        max(total_exercise_count - included_exercise_count, 0),
+    )
+
+    return {
+        "scoring_version": str(meta.get("scoring_version") or SCORING_VERSION_PHASE2_V1),
+        "final_scoring_formula": str(
+            meta.get("final_scoring_formula") or PHASE2_FINAL_SCORING_FORMULA
+        ),
+        "included_weight_sum": included_weight_sum,
+        "total_template_weight_sum": total_template_weight_sum,
+        "coverage_weight_percentage": coverage_weight_percentage,
+        "included_exercise_count": included_exercise_count,
+        "total_exercise_count": total_exercise_count,
+        "invalid_or_excluded_exercise_count": invalid_or_excluded_exercise_count,
+        "score_denominator_type": str(
+            meta.get("score_denominator_type") or PHASE2_SCORE_DENOMINATOR_TYPE
+        ),
+        "score_denominator_deprecated": bool(
+            meta.get("score_denominator_deprecated", True)
+        ),
+    }
+
+
+def _snapshot_number(meta: dict, key: str, fallback: float) -> float:
+    value = meta.get(key)
+    if isinstance(value, int | float):
+        return float(value)
+    return float(fallback)
+
+
+def _snapshot_int(meta: dict, key: str, fallback: int) -> int:
+    value = meta.get(key)
+    if isinstance(value, int):
+        return value
+    if isinstance(value, float):
+        return int(value)
+    return int(fallback or 0)
 
 
 # ─── Template endpoints ───────────────────────────────────────
@@ -1378,6 +1451,14 @@ def finish_attempt(
 
     exercise_summaries = _build_exercise_summaries(db, attempt_id)
 
+    scoring_snapshot = result.scoring_snapshot_json or []
+    scoring_contract = _phase2_scoring_contract(
+        scoring_snapshot,
+        score_denominator=result.score_denominator,
+        total_exercises=result.total_exercises,
+        evaluated_exercises=result.evaluated_exercises,
+    )
+
     return AssessmentResultResponse(
         attempt_id=result.assessment_attempt_id,
         final_score=result.final_score,
@@ -1396,8 +1477,9 @@ def finish_attempt(
         writing_average_score=result.writing_average_score,
         writing_review_required_count=result.writing_review_required_count,
         score_denominator=result.score_denominator,
-        scoring_snapshot=result.scoring_snapshot_json or [],
+        scoring_snapshot=scoring_snapshot,
         exercise_summaries=exercise_summaries,
+        **scoring_contract,
     )
 
 
@@ -1419,6 +1501,14 @@ def get_result(
 
     exercise_summaries = _build_exercise_summaries(db, attempt_id)
 
+    scoring_snapshot = result.scoring_snapshot or []
+    scoring_contract = _phase2_scoring_contract(
+        scoring_snapshot,
+        score_denominator=result.score_denominator,
+        total_exercises=result.total_exercises,
+        evaluated_exercises=result.evaluated_exercises,
+    )
+
     return AssessmentResultResponse(
         attempt_id=result.attempt_id,
         final_score=result.final_score,
@@ -1437,8 +1527,9 @@ def get_result(
         writing_average_score=result.writing_average_score,
         writing_review_required_count=result.writing_review_required_count,
         score_denominator=result.score_denominator,
-        scoring_snapshot=result.scoring_snapshot or [],
+        scoring_snapshot=scoring_snapshot,
         exercise_summaries=exercise_summaries,
+        **scoring_contract,
     )
 
 
@@ -1487,6 +1578,13 @@ def get_attempt_review(
     result = result_repo.find_by_attempt_id(attempt_id)
     result_response = None
     if result:
+        scoring_snapshot = result.scoring_snapshot_json or []
+        scoring_contract = _phase2_scoring_contract(
+            scoring_snapshot,
+            score_denominator=result.score_denominator,
+            total_exercises=result.total_exercises if hasattr(result, 'total_exercises') else 0,
+            evaluated_exercises=result.evaluated_exercises if hasattr(result, 'evaluated_exercises') else 0,
+        )
         result_response = AssessmentResultResponse(
             attempt_id=attempt.id,
             final_score=result.final_score,
@@ -1505,7 +1603,8 @@ def get_attempt_review(
             writing_average_score=result.writing_average_score if hasattr(result, 'writing_average_score') else None,
             writing_review_required_count=result.writing_review_required_count if hasattr(result, 'writing_review_required_count') else 0,
             score_denominator=result.score_denominator,
-            scoring_snapshot=result.scoring_snapshot_json or [],
+            scoring_snapshot=scoring_snapshot,
+            **scoring_contract,
         )
 
     ea_repo = SQLAlchemyExerciseAttemptRepository(db)

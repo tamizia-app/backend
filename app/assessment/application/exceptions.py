@@ -1,6 +1,6 @@
 class AssessmentException(Exception):
     status_code: int = 500
-    detail: str = "Internal assessment error"
+    detail: str | dict = "Internal assessment error"
 
 
 class TemplateNotFoundError(AssessmentException):
@@ -70,7 +70,7 @@ class AttemptAlreadyCompletedError(AssessmentException):
 
 
 class AttemptNotEvaluableError(AssessmentException):
-    def __init__(self, detail: str = "Attempt has required exercises without an eligible score.") -> None:
+    def __init__(self, detail: str | dict = "Attempt has required exercises without an eligible score.") -> None:
         self.status_code = 409
         self.detail = detail
 
