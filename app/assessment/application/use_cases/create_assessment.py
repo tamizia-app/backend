@@ -3,7 +3,7 @@ from datetime import date, datetime, timezone
 from uuid import UUID
 
 from app.assessment.application.assemblers import AssessmentAssembler
-from app.assessment.application.exceptions import TeacherNotOwnerError
+from app.assessment.application.exceptions import TeacherNotOwnerError, TemplateNotFoundError
 from app.assessment.application.ports.repositories import AssessmentRepository, TemplateRepository
 from app.assessment.application.results import AssessmentResult
 from app.assessment.domain.assessment import Assessment
@@ -32,6 +32,13 @@ class CreateAssessmentUseCase:
         self._classroom_repo = classroom_repo
 
     def execute(self, command: CreateAssessmentCommand) -> AssessmentResult:
+        template = self._template_repo.find_accessible_by_id(
+            command.template_id,
+            command.homeroom_teacher_id,
+        )
+        if not template:
+            raise TemplateNotFoundError()
+
         classroom = self._classroom_repo.find_by_id(command.classroom_id)
         if not classroom:
             raise TeacherNotOwnerError("Classroom not found.")

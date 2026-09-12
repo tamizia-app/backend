@@ -1,7 +1,7 @@
 from datetime import datetime
 from uuid import UUID
 
-from sqlalchemy import and_, select
+from sqlalchemy import and_, or_, select
 from sqlalchemy.orm import Session
 
 from app.assessment.application.ports.repositories import (
@@ -92,6 +92,42 @@ class SQLAlchemyTemplateRepository(TemplateRepository):
             .order_by(AssessmentTemplateModel.created_at.desc())
         )
         return [self._to_domain(m) for m in models]
+
+    def find_visible_by_teacher_id(self, teacher_id: UUID) -> list[AssessmentTemplate]:
+        models = self._db.scalars(
+            select(AssessmentTemplateModel)
+            .where(AssessmentTemplateModel.is_active.is_(True))
+            .where(
+                or_(
+                    AssessmentTemplateModel.created_by_teacher_id == teacher_id,
+                    AssessmentTemplateModel.created_by_teacher_id.is_(None),
+                )
+            )
+            .order_by(AssessmentTemplateModel.created_at.desc())
+        )
+        return [self._to_domain(m) for m in models]
+
+    def find_accessible_by_id(self, template_id: UUID, teacher_id: UUID) -> AssessmentTemplate | None:
+        model = self._db.scalar(
+            select(AssessmentTemplateModel)
+            .where(AssessmentTemplateModel.id == template_id)
+            .where(AssessmentTemplateModel.is_active.is_(True))
+            .where(
+                or_(
+                    AssessmentTemplateModel.created_by_teacher_id == teacher_id,
+                    AssessmentTemplateModel.created_by_teacher_id.is_(None),
+                )
+            )
+        )
+        return self._to_domain(model) if model else None
+
+    def find_owned_by_id(self, template_id: UUID, teacher_id: UUID) -> AssessmentTemplate | None:
+        model = self._db.scalar(
+            select(AssessmentTemplateModel)
+            .where(AssessmentTemplateModel.id == template_id)
+            .where(AssessmentTemplateModel.created_by_teacher_id == teacher_id)
+        )
+        return self._to_domain(model) if model else None
 
     def create(self, template: AssessmentTemplate) -> AssessmentTemplate:
         model = AssessmentTemplateModel(

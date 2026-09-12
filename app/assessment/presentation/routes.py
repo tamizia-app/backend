@@ -317,7 +317,7 @@ def create_template(
     db: Session = Depends(get_db),
     current_user: UserModel = Depends(get_current_user),
 ) -> TemplateResponse:
-    teacher_id = _get_teacher_id_or_none(db, current_user.id)
+    teacher_id = _resolve_teacher_id(db, current_user.id)
     uc = CreateTemplateUseCase(SQLAlchemyTemplateRepository(db))
     try:
         result = uc.execute(
@@ -348,9 +348,9 @@ def list_templates(
     db: Session = Depends(get_db),
     current_user: UserModel = Depends(get_current_user),
 ) -> list[TemplateResponse]:
-    teacher_id = _get_teacher_id_or_none(db, current_user.id)
+    teacher_id = _resolve_teacher_id(db, current_user.id)
     repo = SQLAlchemyTemplateRepository(db)
-    templates = repo.find_by_teacher_id(teacher_id) if teacher_id else []
+    templates = repo.find_visible_by_teacher_id(teacher_id)
     return [
         TemplateResponse(
             template_id=t.id,
@@ -372,8 +372,9 @@ def get_template(
     db: Session = Depends(get_db),
     current_user: UserModel = Depends(get_current_user),
 ) -> TemplateResponse:
+    teacher_id = _resolve_teacher_id(db, current_user.id)
     repo = SQLAlchemyTemplateRepository(db)
-    template = repo.find_by_id(template_id)
+    template = repo.find_accessible_by_id(template_id, teacher_id)
     if not template:
         raise HTTPException(status_code=404, detail="Template not found")
     return TemplateResponse(
@@ -785,6 +786,7 @@ def attach_exercise_to_template(
     db: Session = Depends(get_db),
     current_user: UserModel = Depends(get_current_user),
 ) -> dict:
+    teacher_id = _resolve_teacher_id(db, current_user.id)
     uc = AttachExerciseToTemplateUseCase(
         template_repo=SQLAlchemyTemplateRepository(db),
         exercise_repo=SQLAlchemyExerciseRepository(db),
@@ -795,6 +797,7 @@ def attach_exercise_to_template(
             AttachExerciseCommand(
                 template_id=template_id,
                 exercise_id=request.exercise_id,
+                teacher_id=teacher_id,
                 order_index=request.order_index,
                 points=request.points,
                 is_required=request.is_required,

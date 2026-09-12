@@ -15,6 +15,7 @@ from app.assessment.domain.template import AssessmentTemplateExercise, validate_
 class AttachExerciseCommand:
     template_id: UUID
     exercise_id: UUID
+    teacher_id: UUID
     order_index: int
     points: int
     is_required: bool
@@ -32,7 +33,7 @@ class AttachExerciseToTemplateUseCase:
         self._template_exercise_repo = template_exercise_repo
 
     def execute(self, command: AttachExerciseCommand) -> None:
-        template = self._template_repo.find_by_id(command.template_id)
+        template = self._template_repo.find_owned_by_id(command.template_id, command.teacher_id)
         if not template:
             raise TemplateNotFoundError()
 

@@ -19,8 +19,8 @@ class SetTemplateActiveUseCase:
         self._template_repo = template_repo
 
     def execute(self, command: SetTemplateActiveCommand) -> TemplateResult:
-        template = self._template_repo.find_by_id(command.template_id)
-        if not template or template.created_by_teacher_id != command.teacher_id:
+        template = self._template_repo.find_owned_by_id(command.template_id, command.teacher_id)
+        if not template:
             raise TemplateNotFoundError()
 
         updated = self._template_repo.update(

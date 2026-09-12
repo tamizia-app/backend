@@ -67,6 +67,32 @@ curl -X PATCH "$API_URL/api/v1/assessments/templates/{template_id}/exercises/{te
 
 Allowed values are `1`, `2`, and `3`. The endpoint verifies that the relation belongs to the requested template. Existing finalized results are not recalculated.
 
+## Mark Official Templates As Global
+
+Global templates use `assessment_templates.created_by_teacher_id = NULL`. They are visible to all teachers and read-only from normal teacher-facing API endpoints.
+
+Preview exact-name matches without changing data:
+
+```bash
+python scripts/admin/mark_templates_global.py \
+  --template-name TAMIZAI_6A \
+  --template-name TAMIZAI_9A \
+  --template-name TAMIZAI_11A
+```
+
+Apply the conversion only after reviewing the dry-run output:
+
+```bash
+python scripts/admin/mark_templates_global.py \
+  --template-name TAMIZAI_6A \
+  --template-name TAMIZAI_9A \
+  --template-name TAMIZAI_11A \
+  --execute \
+  --confirm-mark-global
+```
+
+The script does not create templates or exercises, change points, or activate templates. See `docs/assessment/global_templates.md` for the full visibility and mutability rules.
+
 ## Demo Data Reset Script
 
 The reset script defaults to dry-run behavior and requires explicit confirmation:

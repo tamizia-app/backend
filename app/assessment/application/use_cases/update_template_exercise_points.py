@@ -28,8 +28,8 @@ class UpdateTemplateExercisePointsUseCase:
         self._template_exercise_repo = template_exercise_repo
 
     def execute(self, command: UpdateTemplateExercisePointsCommand) -> AssessmentTemplateExercise:
-        template = self._template_repo.find_by_id(command.template_id)
-        if not template or template.created_by_teacher_id != command.teacher_id:
+        template = self._template_repo.find_owned_by_id(command.template_id, command.teacher_id)
+        if not template:
             raise TemplateNotFoundError()
 
         template_exercise = self._template_exercise_repo.find_by_id(command.template_exercise_id)
