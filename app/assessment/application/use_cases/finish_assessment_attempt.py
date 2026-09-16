@@ -16,7 +16,7 @@ from app.assessment.application.ports.repositories import (
     ExerciseScoreRepository,
     TemplateExerciseRepository,
 )
-from app.assessment.domain.enums import AttemptStatus, ExerciseType, InterventionLevel
+from app.assessment.domain.enums import AttemptStatus, ExerciseType, InterventionLevel, TechnicalStatus
 from app.assessment.domain.metrics import AssessmentResult, ExerciseScore
 from app.assessment.domain.technical_quality import SCORING_VERSION_PHASE2_V1
 from app.assessment.domain.template import validate_template_exercise_points
@@ -29,6 +29,8 @@ class FinishAssessmentAttemptCommand:
 
 class FinishAssessmentAttemptUseCase:
     """Finalize an attempt exclusively from canonical per-exercise scores."""
+
+    MINIMUM_SCORE_COVERAGE_PERCENTAGE = 70.0
 
     def __init__(
         self,
@@ -59,7 +61,6 @@ class FinishAssessmentAttemptUseCase:
             for score in self._exercise_score_repo.find_by_assessment_attempt_id(attempt.id)
         }
         rows = []
-        blocking: list[dict] = []
         for exercise_attempt in exercise_attempts:
             template_exercise = self._template_exercise_repo.find_by_id(
                 exercise_attempt.template_exercise_id
@@ -75,52 +76,27 @@ class FinishAssessmentAttemptUseCase:
                     f"{exc} template_exercise_id={template_exercise.id}; "
                     "legacy templates must be corrected before finishing."
                 )
-            if template_exercise.is_required and (
-                score is None or not score.score_eligible or current_score is None
-            ):
-                blocking.append(
-                    {
-                        "exercise_attempt_id": str(exercise_attempt.id),
-                        "template_exercise_id": str(template_exercise.id),
-                        "exercise_id": str(exercise.id),
-                        "exercise_type": exercise.type.value,
-                        "order_index": template_exercise.order_index,
-                        "technical_status": score.technical_status.value if score else "INVALID",
-                        "score_eligible": score.score_eligible if score else False,
-                        "quality_reasons": score.quality_reasons if score else ["MISSING_CANONICAL_SCORE"],
-                        "manual_review_required": score.manual_review_required if score else True,
-                    }
-                )
-
-        if blocking:
-            raise AttemptNotEvaluableError(
-                {
-                    "code": "ASSESSMENT_NOT_INTERPRETABLE",
-                    "message": (
-                        "La evaluación no cuenta con evidencia suficiente para generar "
-                        "un resultado global interpretable."
-                    ),
-                    "reason": "required_exercise_not_eligible",
-                    "scoring_version": SCORING_VERSION_PHASE2_V1,
-                    "blocking_required_exercises": blocking,
-                    "recommendation": (
-                        "Aplicar una forma equivalente de la batería en lugar de repetir "
-                        "exactamente la misma plantilla."
-                    ),
-                }
-            )
-
         included_rows = [
             (exercise_attempt, template_exercise, exercise, score)
             for exercise_attempt, template_exercise, exercise, score in rows
-            if score and score.score_eligible and self._current_score(score) is not None
+            if self._is_included_score(score)
         ]
         included = [score for *_, score in included_rows]
-        if not included_rows:
-            raise AttemptNotEvaluableError("Attempt has no technically valid, score-eligible exercises.")
 
         included_weight_sum = sum(template_exercise.points for _, template_exercise, _, _ in included_rows)
         total_template_weight_sum = sum(template_exercise.points for _, template_exercise, _, _ in rows)
+        coverage_weight_percentage = (
+            round((included_weight_sum / total_template_weight_sum) * 100, 2)
+            if total_template_weight_sum
+            else 0.0
+        )
+        self._raise_if_not_interpretable(
+            rows=rows,
+            included_rows=included_rows,
+            included_weight_sum=included_weight_sum,
+            total_template_weight_sum=total_template_weight_sum,
+            coverage_weight_percentage=coverage_weight_percentage,
+        )
         final_score = (
             sum(self._current_score(score) * template_exercise.points for _, template_exercise, _, score in included_rows)
             / included_weight_sum
@@ -150,11 +126,7 @@ class FinishAssessmentAttemptUseCase:
         ]
         included_exercise_count = len(included_rows)
         total_exercise_count = len(rows)
-        coverage_weight_percentage = (
-            round((included_weight_sum / total_template_weight_sum) * 100, 2)
-            if total_template_weight_sum
-            else 0.0
-        )
+        warning_metadata = self._warning_metadata(rows)
         snapshot = [
             self._snapshot_row(
                 *row,
@@ -163,6 +135,11 @@ class FinishAssessmentAttemptUseCase:
                 included_exercise_count=included_exercise_count,
                 total_exercise_count=total_exercise_count,
                 coverage_weight_percentage=coverage_weight_percentage,
+                partial_exercise_count=warning_metadata["partial_exercise_count"],
+                invalid_exercise_count=warning_metadata["invalid_exercise_count"],
+                result_status=warning_metadata["result_status"],
+                has_warnings=warning_metadata["has_warnings"],
+                warning_reasons=warning_metadata["warning_reasons"],
             )
             for row in rows
         ]
@@ -232,9 +209,14 @@ class FinishAssessmentAttemptUseCase:
         included_exercise_count: int,
         total_exercise_count: int,
         coverage_weight_percentage: float,
+        partial_exercise_count: int,
+        invalid_exercise_count: int,
+        result_status: str,
+        has_warnings: bool,
+        warning_reasons: list[str],
     ) -> dict:
         current_score = FinishAssessmentAttemptUseCase._current_score(score)
-        included = bool(score and score.score_eligible and current_score is not None)
+        included = FinishAssessmentAttemptUseCase._is_included_score(score)
         exclusion_reason = None
         if not included:
             if score is None:
@@ -294,7 +276,12 @@ class FinishAssessmentAttemptUseCase:
             "included_exercise_count": included_exercise_count,
             "total_exercise_count": total_exercise_count,
             "invalid_or_excluded_exercise_count": total_exercise_count - included_exercise_count,
+            "partial_exercise_count": partial_exercise_count,
+            "invalid_exercise_count": invalid_exercise_count,
             "coverage_weight_percentage": coverage_weight_percentage,
+            "result_status": result_status,
+            "has_warnings": has_warnings,
+            "warning_reasons": warning_reasons,
             "score_denominator_type": "included_weight_sum",
             "score_denominator_deprecated": True,
             "intervention_level_status": "provisional",
@@ -305,6 +292,95 @@ class FinishAssessmentAttemptUseCase:
         if score is None:
             return None
         return score.current_score if score.current_score is not None else score.score
+
+    @staticmethod
+    def _is_included_score(score: ExerciseScore | None) -> bool:
+        if score is None or FinishAssessmentAttemptUseCase._current_score(score) is None:
+            return False
+        return score.score_eligible or score.technical_status == TechnicalStatus.PARTIAL
+
+    @classmethod
+    def _raise_if_not_interpretable(
+        cls,
+        *,
+        rows: list[tuple],
+        included_rows: list[tuple],
+        included_weight_sum: int,
+        total_template_weight_sum: int,
+        coverage_weight_percentage: float,
+    ) -> None:
+        reason = None
+        if coverage_weight_percentage < cls.MINIMUM_SCORE_COVERAGE_PERCENTAGE:
+            reason = "insufficient_score_coverage"
+        elif cls._domain_expected(rows, (ExerciseType.READING_SPEAKING, ExerciseType.LISTENING_SPEAKING)) and not cls._domain_included(
+            included_rows, (ExerciseType.READING_SPEAKING, ExerciseType.LISTENING_SPEAKING)
+        ):
+            reason = "no_speaking_evidence"
+        elif cls._domain_expected(rows, (ExerciseType.READING_WRITING, ExerciseType.LISTENING_WRITING)) and not cls._domain_included(
+            included_rows, (ExerciseType.READING_WRITING, ExerciseType.LISTENING_WRITING)
+        ):
+            reason = "no_writing_evidence"
+
+        if not reason:
+            return
+
+        raise AttemptNotEvaluableError(
+            {
+                "code": "ASSESSMENT_NOT_INTERPRETABLE",
+                "message": (
+                    "La evaluación no cuenta con evidencia suficiente para generar "
+                    "un resultado global interpretable."
+                ),
+                "reason": reason,
+                "scoring_version": SCORING_VERSION_PHASE2_V1,
+                "included_weight_sum": included_weight_sum,
+                "total_template_weight_sum": total_template_weight_sum,
+                "coverage_weight_percentage": coverage_weight_percentage,
+                "minimum_coverage_weight_percentage": cls.MINIMUM_SCORE_COVERAGE_PERCENTAGE,
+                "recommendation": (
+                    "Revisar o reemplazar únicamente la evidencia técnicamente insuficiente."
+                ),
+            }
+        )
+
+    @staticmethod
+    def _domain_expected(rows: list[tuple], exercise_types: tuple[ExerciseType, ...]) -> bool:
+        return any(exercise.type in exercise_types for _, _, exercise, _ in rows)
+
+    @staticmethod
+    def _domain_included(rows: list[tuple], exercise_types: tuple[ExerciseType, ...]) -> bool:
+        return any(exercise.type in exercise_types for _, _, exercise, _ in rows)
+
+    @classmethod
+    def _warning_metadata(cls, rows: list[tuple]) -> dict:
+        partial_count = sum(
+            bool(score and score.technical_status == TechnicalStatus.PARTIAL)
+            for *_, score in rows
+        )
+        invalid_count = sum(
+            bool((score and score.technical_status == TechnicalStatus.INVALID) or score is None)
+            for *_, score in rows
+        )
+        excluded_count = sum(not cls._is_included_score(score) for *_, score in rows)
+        manual_review_count = sum(bool(score and score.manual_review_required) for *_, score in rows)
+
+        warning_reasons = []
+        if partial_count:
+            warning_reasons.append("PARTIAL_EXERCISES")
+        if invalid_count:
+            warning_reasons.append("INVALID_EXERCISES")
+        if excluded_count:
+            warning_reasons.append("EXCLUDED_EXERCISES")
+        if manual_review_count:
+            warning_reasons.append("MANUAL_REVIEW_REQUIRED")
+
+        return {
+            "partial_exercise_count": partial_count,
+            "invalid_exercise_count": invalid_count,
+            "result_status": "COMPLETED_WITH_WARNINGS" if warning_reasons else "COMPLETED",
+            "has_warnings": bool(warning_reasons),
+            "warning_reasons": warning_reasons,
+        }
 
     @staticmethod
     def _clean_scoring_components(components: dict | None) -> dict:

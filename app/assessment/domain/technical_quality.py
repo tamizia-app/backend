@@ -17,6 +17,23 @@ READING_PHASE2_COMPONENT_WEIGHTS = {
 }
 
 
+PERFORMANCE_REASONS = frozenset(
+    {
+        "HIGH_WORD_ERROR_RATE",
+        "HIGH_CHARACTER_ERROR_RATE",
+        "LOW_ACCURACY_SCORE",
+        "LOW_PRONUNCIATION_SCORE",
+        "LOW_COMPLETENESS_SCORE",
+        "LOW_TEXT_SIMILARITY",
+        "LOW_LEXICAL_MATCH",
+        "LOW_WORD_ACCURACY",
+        "LOW_CHAR_ACCURACY",
+        "EXTRA_WORDS_DETECTED",
+        "OMITTED_WORDS_DETECTED",
+    }
+)
+
+
 READING_TECHNICAL_REASONS = frozenset(
     {
         "STT_PROVIDER_FAILED",
@@ -112,7 +129,7 @@ def reading_quality(pipeline_result: dict, score: float | None) -> TechnicalQual
         technical_status = TechnicalStatus.VALID
     return TechnicalQuality(
         technical_status=technical_status,
-        score_eligible=technical_status == TechnicalStatus.VALID and score is not None,
+        score_eligible=technical_status in (TechnicalStatus.VALID, TechnicalStatus.PARTIAL) and score is not None,
         manual_review_required=bool(review.get("required")) or bool(reasons),
         quality_reasons=reasons,
     )
@@ -143,15 +160,15 @@ def writing_quality(
         reasons.append("EMPTY_RECOGNIZED_TEXT")
     reasons = _unique(reasons)
 
-    if error_code or not (recognized_text or "").strip() or score is None:
+    if not (recognized_text or "").strip() or score is None:
         technical_status = TechnicalStatus.INVALID
-    elif confidence_avg is not None and confidence_avg < 0.70:
+    elif error_code or (confidence_avg is not None and confidence_avg < 0.70):
         technical_status = TechnicalStatus.PARTIAL
     else:
         technical_status = TechnicalStatus.VALID
     return TechnicalQuality(
         technical_status=technical_status,
-        score_eligible=technical_status == TechnicalStatus.VALID and score is not None,
+        score_eligible=technical_status in (TechnicalStatus.VALID, TechnicalStatus.PARTIAL) and score is not None,
         manual_review_required=review_required or bool(reasons),
         quality_reasons=reasons,
     )

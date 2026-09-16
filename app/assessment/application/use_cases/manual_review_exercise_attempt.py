@@ -304,7 +304,7 @@ class ManualReviewExerciseAttemptUseCase:
             rows.append((exercise_attempt, template_exercise, exercise, canonical.get(exercise_attempt.id)))
 
         included_rows = [
-            row for row in rows if row[3] and row[3].score_eligible and self._current_score(row[3]) is not None
+            row for row in rows if self._is_included_score(row[3])
         ]
         if not included_rows:
             return {
@@ -341,6 +341,7 @@ class ManualReviewExerciseAttemptUseCase:
             if total_template_weight_sum
             else 0.0
         )
+        warning_metadata = self._warning_metadata(rows)
         snapshot = [
             self._snapshot_row(
                 *row,
@@ -349,6 +350,11 @@ class ManualReviewExerciseAttemptUseCase:
                 included_exercise_count=len(included_rows),
                 total_exercise_count=len(rows),
                 coverage_weight_percentage=coverage_weight_percentage,
+                partial_exercise_count=warning_metadata["partial_exercise_count"],
+                invalid_exercise_count=warning_metadata["invalid_exercise_count"],
+                result_status=warning_metadata["result_status"],
+                has_warnings=warning_metadata["has_warnings"],
+                warning_reasons=warning_metadata["warning_reasons"],
             )
             for row in rows
         ]
@@ -410,9 +416,14 @@ class ManualReviewExerciseAttemptUseCase:
         included_exercise_count: int,
         total_exercise_count: int,
         coverage_weight_percentage: float,
+        partial_exercise_count: int,
+        invalid_exercise_count: int,
+        result_status: str,
+        has_warnings: bool,
+        warning_reasons: list[str],
     ) -> dict:
         current_score = ManualReviewExerciseAttemptUseCase._current_score(score)
-        included = bool(score and score.score_eligible and current_score is not None)
+        included = ManualReviewExerciseAttemptUseCase._is_included_score(score)
         current_components = ManualReviewExerciseAttemptUseCase._clean_scoring_components(
             score.current_scoring_components or score.scoring_components if score else {}
         )
@@ -457,7 +468,12 @@ class ManualReviewExerciseAttemptUseCase:
             "included_exercise_count": included_exercise_count,
             "total_exercise_count": total_exercise_count,
             "invalid_or_excluded_exercise_count": total_exercise_count - included_exercise_count,
+            "partial_exercise_count": partial_exercise_count,
+            "invalid_exercise_count": invalid_exercise_count,
             "coverage_weight_percentage": coverage_weight_percentage,
+            "result_status": result_status,
+            "has_warnings": has_warnings,
+            "warning_reasons": warning_reasons,
             "score_denominator_type": "included_weight_sum",
             "score_denominator_deprecated": True,
             "intervention_level_status": "provisional",
@@ -468,6 +484,43 @@ class ManualReviewExerciseAttemptUseCase:
         if score is None:
             return None
         return score.current_score if score.current_score is not None else score.score
+
+    @staticmethod
+    def _is_included_score(score: ExerciseScore | None) -> bool:
+        if score is None or ManualReviewExerciseAttemptUseCase._current_score(score) is None:
+            return False
+        return score.score_eligible or score.technical_status == TechnicalStatus.PARTIAL
+
+    @classmethod
+    def _warning_metadata(cls, rows: list[tuple]) -> dict:
+        partial_count = sum(
+            bool(score and score.technical_status == TechnicalStatus.PARTIAL)
+            for *_, score in rows
+        )
+        invalid_count = sum(
+            bool((score and score.technical_status == TechnicalStatus.INVALID) or score is None)
+            for *_, score in rows
+        )
+        excluded_count = sum(not cls._is_included_score(score) for *_, score in rows)
+        manual_review_count = sum(bool(score and score.manual_review_required) for *_, score in rows)
+
+        warning_reasons = []
+        if partial_count:
+            warning_reasons.append("PARTIAL_EXERCISES")
+        if invalid_count:
+            warning_reasons.append("INVALID_EXERCISES")
+        if excluded_count:
+            warning_reasons.append("EXCLUDED_EXERCISES")
+        if manual_review_count:
+            warning_reasons.append("MANUAL_REVIEW_REQUIRED")
+
+        return {
+            "partial_exercise_count": partial_count,
+            "invalid_exercise_count": invalid_count,
+            "result_status": "COMPLETED_WITH_WARNINGS" if warning_reasons else "COMPLETED",
+            "has_warnings": bool(warning_reasons),
+            "warning_reasons": warning_reasons,
+        }
 
     @staticmethod
     def _clean_scoring_components(components: dict | None) -> dict:

@@ -266,6 +266,40 @@ def _phase2_scoring_contract(
         "invalid_or_excluded_exercise_count",
         max(total_exercise_count - included_exercise_count, 0),
     )
+    partial_exercise_count = _snapshot_int(
+        meta,
+        "partial_exercise_count",
+        sum(
+            row.get("technical_status") == "PARTIAL"
+            for row in snapshot
+            if isinstance(row, dict)
+        ),
+    )
+    invalid_exercise_count = _snapshot_int(
+        meta,
+        "invalid_exercise_count",
+        sum(
+            row.get("technical_status") == "INVALID"
+            for row in snapshot
+            if isinstance(row, dict)
+        ),
+    )
+    warning_reasons = meta.get("warning_reasons")
+    if not isinstance(warning_reasons, list):
+        warning_reasons = []
+        if partial_exercise_count:
+            warning_reasons.append("PARTIAL_EXERCISES")
+        if invalid_exercise_count:
+            warning_reasons.append("INVALID_EXERCISES")
+        if invalid_or_excluded_exercise_count:
+            warning_reasons.append("EXCLUDED_EXERCISES")
+        if any(row.get("manual_review_required") for row in snapshot if isinstance(row, dict)):
+            warning_reasons.append("MANUAL_REVIEW_REQUIRED")
+    has_warnings = bool(meta.get("has_warnings", bool(warning_reasons)))
+    result_status = str(
+        meta.get("result_status")
+        or ("COMPLETED_WITH_WARNINGS" if has_warnings else "COMPLETED")
+    )
 
     return {
         "scoring_version": str(meta.get("scoring_version") or SCORING_VERSION_PHASE2_V1),
@@ -278,6 +312,11 @@ def _phase2_scoring_contract(
         "included_exercise_count": included_exercise_count,
         "total_exercise_count": total_exercise_count,
         "invalid_or_excluded_exercise_count": invalid_or_excluded_exercise_count,
+        "partial_exercise_count": partial_exercise_count,
+        "invalid_exercise_count": invalid_exercise_count,
+        "result_status": result_status,
+        "has_warnings": has_warnings,
+        "warning_reasons": warning_reasons,
         "score_denominator_type": str(
             meta.get("score_denominator_type") or PHASE2_SCORE_DENOMINATOR_TYPE
         ),

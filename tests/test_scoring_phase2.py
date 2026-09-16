@@ -23,12 +23,14 @@ from app.assessment.domain.enums import (
 )
 from app.assessment.domain.exercise import AssessmentExercise
 from app.assessment.domain.metrics import AssessmentResult, ExerciseScore
-from app.assessment.domain.technical_quality import calculate_reading_score
+from app.assessment.domain.assessment_review import determine_manual_review
+from app.assessment.domain.technical_quality import calculate_reading_score, reading_quality, writing_quality
 from app.assessment.domain.template import AssessmentTemplateExercise
 from app.assessment.domain.writing_text_comparison import (
     calculate_similarity_score,
     determine_writing_review,
 )
+from app.assessment.application.ports.speech_to_text import TranscriptionResult, TranscriptionSegment
 from app.iam.infrastructure.models.user_model import UserModel
 from app.school.infrastructure.models.classroom_model import ClassroomModel
 from app.school.infrastructure.models.homeroom_teacher_model import HomeroomTeacherModel
@@ -178,6 +180,88 @@ def test_writing_ocr_confidence_does_not_change_numeric_score():
     assert low_confidence.review_required is True
 
 
+def test_speaking_low_performance_reasons_are_score_eligible_not_invalid():
+    quality = reading_quality(
+        {
+            "status": "completed",
+            "recognized_text": "el sol brilla que",
+            "assessment_recognized_text": "el sol brilla que",
+            "review": {
+                "required": True,
+                "reasons": [
+                    "HIGH_WORD_ERROR_RATE",
+                    "LOW_LEXICAL_MATCH",
+                    "LOW_ACCURACY_SCORE",
+                ],
+            },
+        },
+        score=25.0,
+    )
+
+    assert quality.technical_status == TechnicalStatus.VALID
+    assert quality.score_eligible is True
+    assert quality.manual_review_required is True
+
+
+def test_speaking_extra_words_are_review_reasons_not_technical_invalidity():
+    review = determine_manual_review(
+        TranscriptionResult(
+            text="el sol brilla que",
+            language="es",
+            language_probability=0.99,
+            duration_seconds=2.0,
+            segments=[
+                TranscriptionSegment(
+                    text="el sol brilla que",
+                    start_seconds=0.0,
+                    end_seconds=2.0,
+                    avg_logprob=-0.1,
+                    no_speech_prob=0.01,
+                    words=[],
+                )
+            ],
+            provider="test",
+            model="test",
+        ),
+        azure_text="el sol brilla que",
+        audio_duration_seconds=2.0,
+        low_logprob_threshold=-1.0,
+        comparison={
+            "wer_percentage": 300.0,
+            "lexical_match_percentage": 100.0,
+            "insertions": 3,
+            "omissions": 0,
+        },
+    )
+    quality = reading_quality(
+        {
+            "status": "completed",
+            "recognized_text": "el sol brilla que",
+            "review": review,
+        },
+        score=45.0,
+    )
+
+    assert "EXTRA_WORDS_DETECTED" in review["reasons"]
+    assert "HIGH_WORD_ERROR_RATE" in review["reasons"]
+    assert quality.technical_status == TechnicalStatus.VALID
+    assert quality.score_eligible is True
+
+
+def test_writing_low_similarity_with_ocr_text_is_score_eligible_not_invalid():
+    quality = writing_quality(
+        recognized_text="texto muy distinto",
+        confidence_avg=0.95,
+        score=20.0,
+        review_required=True,
+        review_reasons=["LOW_TEXT_SIMILARITY", "HIGH_CHARACTER_ERROR_RATE"],
+    )
+
+    assert quality.technical_status == TechnicalStatus.VALID
+    assert quality.score_eligible is True
+    assert quality.manual_review_required is True
+
+
 @pytest.mark.parametrize("points", [1, 2, 3])
 def test_attach_exercise_accepts_phase2_points(client, teacher_headers, points):
     template_id, exercise_id = _create_template_and_mc_exercise(client, teacher_headers)
@@ -262,15 +346,17 @@ def test_final_score_uses_current_scores_and_initializes_original_current_result
     assert result.current_scoring_snapshot_json == result.scoring_snapshot_json
 
 
-def test_optional_invalid_is_excluded_and_lowers_weight_coverage():
+def test_invalid_exercise_is_excluded_when_coverage_and_domains_are_sufficient():
     uc = _finish_use_case(
         [
+            _row(ExerciseType.READING_SPEAKING, score=90, points=3, is_required=True),
+            _row(ExerciseType.READING_WRITING, score=80, points=3, is_required=True),
             _row(ExerciseType.MULTIPLE_CHOICE, score=100, points=3, is_required=True),
             _row(
-                ExerciseType.READING_WRITING,
+                ExerciseType.MULTIPLE_CHOICE,
                 score=None,
-                points=3,
-                is_required=False,
+                points=1,
+                is_required=True,
                 score_eligible=False,
                 technical_status=TechnicalStatus.INVALID,
             ),
@@ -279,15 +365,152 @@ def test_optional_invalid_is_excluded_and_lowers_weight_coverage():
 
     result = uc.execute(FinishAssessmentAttemptCommand(attempt_id=uc.attempt_id))
 
-    assert result.final_score == 100.0
-    assert result.score_denominator == 3
-    assert result.evaluated_exercises == 1
+    assert result.final_score == 90.0
+    assert result.score_denominator == 9
+    assert result.evaluated_exercises == 3
     excluded = next(row for row in result.scoring_snapshot_json if not row["included"])
     assert excluded["exclusion_reason"] == "NOT_SCORE_ELIGIBLE"
-    assert excluded["included_weight_sum"] == 3
-    assert excluded["total_template_weight_sum"] == 6
-    assert excluded["coverage_weight_percentage"] == 50.0
+    assert excluded["included_weight_sum"] == 9
+    assert excluded["total_template_weight_sum"] == 10
+    assert excluded["coverage_weight_percentage"] == 90.0
     assert excluded["invalid_or_excluded_exercise_count"] == 1
+    assert excluded["result_status"] == "COMPLETED_WITH_WARNINGS"
+    assert excluded["has_warnings"] is True
+    assert "INVALID_EXERCISES" in excluded["warning_reasons"]
+
+
+def test_low_scores_with_technical_evidence_finish_with_high_intervention():
+    uc = _finish_use_case(
+        [
+            _row(ExerciseType.READING_SPEAKING, score=10, points=3),
+            _row(ExerciseType.READING_WRITING, score=20, points=3),
+            _row(ExerciseType.MULTIPLE_CHOICE, score=30, points=3),
+        ]
+    )
+
+    result = uc.execute(FinishAssessmentAttemptCommand(attempt_id=uc.attempt_id))
+
+    assert result.final_score == 20.0
+    assert result.intervention_level.value == "HIGH"
+
+
+def test_required_partial_with_score_is_included_and_warns():
+    uc = _finish_use_case(
+        [
+            _row(
+                ExerciseType.READING_SPEAKING,
+                score=40,
+                points=3,
+                score_eligible=False,
+                technical_status=TechnicalStatus.PARTIAL,
+                manual_review_required=True,
+                quality_reasons=["LOW_ASR_QUALITY"],
+            ),
+            _row(ExerciseType.READING_WRITING, score=80, points=3),
+            _row(ExerciseType.MULTIPLE_CHOICE, score=100, points=3),
+        ]
+    )
+
+    result = uc.execute(FinishAssessmentAttemptCommand(attempt_id=uc.attempt_id))
+
+    partial = next(row for row in result.scoring_snapshot_json if row["technical_status"] == "PARTIAL")
+    assert partial["included"] is True
+    assert partial["effective_weight"] == 3
+    assert result.score_denominator == 9
+    assert partial["result_status"] == "COMPLETED_WITH_WARNINGS"
+    assert "PARTIAL_EXERCISES" in partial["warning_reasons"]
+
+
+def test_required_partial_without_score_is_excluded_if_global_evidence_is_sufficient():
+    uc = _finish_use_case(
+        [
+            _row(ExerciseType.READING_SPEAKING, score=80, points=3),
+            _row(ExerciseType.READING_WRITING, score=80, points=3),
+            _row(ExerciseType.MULTIPLE_CHOICE, score=100, points=3),
+            _row(
+                ExerciseType.MULTIPLE_CHOICE,
+                score=None,
+                points=1,
+                score_eligible=False,
+                technical_status=TechnicalStatus.PARTIAL,
+                manual_review_required=True,
+                quality_reasons=["PARTIAL_EVALUATION"],
+            ),
+        ]
+    )
+
+    result = uc.execute(FinishAssessmentAttemptCommand(attempt_id=uc.attempt_id))
+
+    excluded = next(row for row in result.scoring_snapshot_json if not row["included"])
+    assert excluded["technical_status"] == "PARTIAL"
+    assert excluded["exclusion_reason"] == "NOT_SCORE_ELIGIBLE"
+    assert excluded["coverage_weight_percentage"] == 90.0
+    assert "PARTIAL_EXERCISES" in excluded["warning_reasons"]
+
+
+def test_finish_blocks_when_score_coverage_is_below_threshold():
+    uc = _finish_use_case(
+        [
+            _row(ExerciseType.READING_SPEAKING, score=80, points=1),
+            _row(
+                ExerciseType.READING_WRITING,
+                score=None,
+                points=3,
+                score_eligible=False,
+                technical_status=TechnicalStatus.INVALID,
+            ),
+        ]
+    )
+
+    with pytest.raises(AttemptNotEvaluableError) as exc:
+        uc.execute(FinishAssessmentAttemptCommand(attempt_id=uc.attempt_id))
+
+    assert exc.value.detail["reason"] == "insufficient_score_coverage"
+    assert exc.value.detail["coverage_weight_percentage"] == 25.0
+
+
+def test_finish_blocks_when_template_has_no_evaluable_speaking():
+    uc = _finish_use_case(
+        [
+            _row(
+                ExerciseType.READING_SPEAKING,
+                score=None,
+                points=1,
+                score_eligible=False,
+                technical_status=TechnicalStatus.INVALID,
+            ),
+            _row(ExerciseType.READING_WRITING, score=80, points=3),
+            _row(ExerciseType.MULTIPLE_CHOICE, score=100, points=3),
+            _row(ExerciseType.MULTIPLE_CHOICE, score=100, points=3),
+        ]
+    )
+
+    with pytest.raises(AttemptNotEvaluableError) as exc:
+        uc.execute(FinishAssessmentAttemptCommand(attempt_id=uc.attempt_id))
+
+    assert exc.value.detail["reason"] == "no_speaking_evidence"
+
+
+def test_finish_blocks_when_template_has_no_evaluable_writing():
+    uc = _finish_use_case(
+        [
+            _row(ExerciseType.READING_SPEAKING, score=80, points=3),
+            _row(
+                ExerciseType.READING_WRITING,
+                score=None,
+                points=1,
+                score_eligible=False,
+                technical_status=TechnicalStatus.INVALID,
+            ),
+            _row(ExerciseType.MULTIPLE_CHOICE, score=100, points=3),
+            _row(ExerciseType.MULTIPLE_CHOICE, score=100, points=3),
+        ]
+    )
+
+    with pytest.raises(AttemptNotEvaluableError) as exc:
+        uc.execute(FinishAssessmentAttemptCommand(attempt_id=uc.attempt_id))
+
+    assert exc.value.detail["reason"] == "no_writing_evidence"
 
 
 def test_required_invalid_blocks_final_score():
@@ -395,7 +618,7 @@ def test_finish_get_result_and_review_expose_phase2_scoring_contract(
     )
 
 
-def test_optional_invalid_response_exposes_lower_phase2_coverage(
+def test_low_coverage_response_returns_structured_not_interpretable_error(
     client, teacher_headers, classroom_id, student_id
 ):
     template = client.post(
@@ -435,16 +658,13 @@ def test_optional_invalid_response_exposes_lower_phase2_coverage(
     finish = client.post(
         f"/api/v1/assessments/attempts/{attempt_id}/finish", headers=teacher_headers
     )
-    assert finish.status_code == 200
-    _assert_phase2_contract(
-        finish.json(),
-        included_weight_sum=1,
-        total_template_weight_sum=4,
-        coverage_weight_percentage=25.0,
-        included_exercise_count=1,
-        total_exercise_count=2,
-        invalid_or_excluded_exercise_count=1,
-    )
+    assert finish.status_code == 409
+    detail = finish.json()["detail"]
+    assert detail["code"] == "ASSESSMENT_NOT_INTERPRETABLE"
+    assert detail["reason"] == "insufficient_score_coverage"
+    assert detail["included_weight_sum"] == 1
+    assert detail["total_template_weight_sum"] == 4
+    assert detail["coverage_weight_percentage"] == 25.0
 
 
 def test_required_invalid_returns_structured_not_interpretable_error(
@@ -465,10 +685,9 @@ def test_required_invalid_returns_structured_not_interpretable_error(
     assert finish.status_code == 409
     detail = finish.json()["detail"]
     assert detail["code"] == "ASSESSMENT_NOT_INTERPRETABLE"
-    assert detail["reason"] == "required_exercise_not_eligible"
+    assert detail["reason"] == "insufficient_score_coverage"
     assert detail["scoring_version"] == "phase2_v1"
-    assert detail["blocking_required_exercises"][0]["score_eligible"] is False
-    assert detail["blocking_required_exercises"][0]["template_exercise_id"]
+    assert detail["coverage_weight_percentage"] == 0.0
     assert "resultado global interpretable" in detail["message"]
 
     result = client.get(
@@ -561,6 +780,8 @@ def _row(
     is_required: bool = True,
     score_eligible: bool = True,
     technical_status: TechnicalStatus = TechnicalStatus.VALID,
+    manual_review_required: bool = False,
+    quality_reasons: list[str] | None = None,
 ) -> dict:
     return {
         "exercise_attempt_id": uuid4(),
@@ -573,6 +794,8 @@ def _row(
         "is_required": is_required,
         "score_eligible": score_eligible,
         "technical_status": technical_status,
+        "manual_review_required": manual_review_required,
+        "quality_reasons": quality_reasons or [],
     }
 
 
@@ -638,8 +861,8 @@ def _finish_use_case(rows: list[dict]) -> FinishAssessmentAttemptUseCase:
                 score=row["score"],
                 score_eligible=row["score_eligible"],
                 technical_status=row["technical_status"],
-                manual_review_required=False,
-                quality_reasons=[],
+                manual_review_required=row["manual_review_required"],
+                quality_reasons=row["quality_reasons"],
                 scoring_components={"is_correct": row["score"] == 100},
                 created_at=now,
                 updated_at=now,

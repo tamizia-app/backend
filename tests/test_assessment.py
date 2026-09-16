@@ -1028,7 +1028,7 @@ def test_upload_speaking_response_whisper_fails_azure_works(client, teacher_head
     assert data["assessment_recognized_text"] == "hola mundo"
     assert data["pronunciation_score"] == 85.0
     assert data["technical_status"] == "PARTIAL"
-    assert data["score_eligible"] is False
+    assert data["score_eligible"] is True
     assert data["exercise_score"] is not None
 
 
@@ -1075,7 +1075,7 @@ def test_upload_speaking_response_azure_fails_whisper_works(client, teacher_head
     assert data["comparison"] is not None
     assert data["review"] is not None
     assert data["technical_status"] == "PARTIAL"
-    assert data["score_eligible"] is False
+    assert data["score_eligible"] is True
     assert data["exercise_score"] == 100.0
 
 
@@ -4967,14 +4967,10 @@ def test_phase1_optional_invalid_is_excluded_with_snapshot(client, teacher_heade
     finished = client.post(
         f"/api/v1/assessments/attempts/{attempt['attempt_id']}/finish", headers=teacher_headers
     )
-    assert finished.status_code == 200
-    payload = finished.json()
-    assert payload["final_score"] == 100.0
-    assert payload["intervention_level"] == "LOW"
-    assert payload["score_denominator"] == 2
-    excluded = next(row for row in payload["scoring_snapshot"] if not row["included"])
-    assert excluded["technical_status"] == "INVALID"
-    assert excluded["exclusion_reason"] == "NOT_SCORE_ELIGIBLE"
+    assert finished.status_code == 409
+    detail = finished.json()["detail"]
+    assert detail["reason"] == "insufficient_score_coverage"
+    assert detail["coverage_weight_percentage"] == 50.0
 
 
 def test_phase1_history_latest_and_trend_use_newest_date(client, teacher_headers, classroom_id, student_id):
@@ -5065,11 +5061,13 @@ def test_phase1_ocr_low_confidence_is_partial_not_low_performance(
         data = response.json()
         assert data["exercise_score"] == 100.0
         assert data["technical_status"] == "PARTIAL"
-        assert data["score_eligible"] is False
+        assert data["score_eligible"] is True
         assert "LOW_OCR_CONFIDENCE" in data["quality_reasons"]
-        assert client.post(
+        finish = client.post(
             f"/api/v1/assessments/attempts/{attempt_id}/finish", headers=teacher_headers
-        ).status_code == 409
+        )
+        assert finish.status_code == 200
+        assert finish.json()["result_status"] == "COMPLETED_WITH_WARNINGS"
     finally:
         get_settings.cache_clear()
 

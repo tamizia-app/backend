@@ -82,6 +82,10 @@ def determine_manual_review(
         lexical_match = comparison.get("lexical_match_percentage")
         if lexical_match is not None and lexical_match < 70:
             reasons.append("LOW_LEXICAL_MATCH")
+        if (comparison.get("insertions") or 0) > 0:
+            reasons.append("EXTRA_WORDS_DETECTED")
+        if (comparison.get("omissions") or 0) > 0:
+            reasons.append("OMITTED_WORDS_DETECTED")
 
     if pronunciation_score is not None and pronunciation_score < 70:
         reasons.append("LOW_PRONUNCIATION_SCORE")

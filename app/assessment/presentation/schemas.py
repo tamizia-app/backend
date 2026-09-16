@@ -393,6 +393,11 @@ class AssessmentResultResponse(BaseModel):
     included_exercise_count: int = 0
     total_exercise_count: int = 0
     invalid_or_excluded_exercise_count: int = 0
+    partial_exercise_count: int = 0
+    invalid_exercise_count: int = 0
+    result_status: str = "COMPLETED"
+    has_warnings: bool = False
+    warning_reasons: list[str] = []
     score_denominator_type: str = "included_weight_sum"
     score_denominator_deprecated: bool = True
     scoring_snapshot: list[dict] = []
