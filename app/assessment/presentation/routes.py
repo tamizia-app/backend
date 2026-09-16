@@ -307,6 +307,31 @@ def _current_score(canonical) -> float | None:
     return canonical.current_score if canonical.current_score is not None else canonical.score
 
 
+def _clean_scoring_components(components: dict | None) -> dict:
+    cleaned = dict(components or {})
+    cleaned.pop("original_scoring_components", None)
+    return cleaned
+
+
+def _current_scoring_components(canonical) -> dict:
+    if not canonical:
+        return {}
+    return _clean_scoring_components(
+        canonical.current_scoring_components or canonical.scoring_components
+    )
+
+
+def _original_scoring_components(canonical) -> dict:
+    if not canonical:
+        return {}
+    if canonical.original_scoring_components:
+        return _clean_scoring_components(canonical.original_scoring_components)
+    nested_original = (canonical.scoring_components or {}).get("original_scoring_components")
+    if isinstance(nested_original, dict):
+        return _clean_scoring_components(nested_original)
+    return {}
+
+
 def _template_response(template) -> TemplateResponse:
     return TemplateResponse(
         template_id=template.template_id,
@@ -1344,7 +1369,7 @@ def get_speaking_response(
         score_eligible=canonical.score_eligible if canonical else False,
         manual_review_required=canonical.manual_review_required if canonical else True,
         quality_reasons=canonical.quality_reasons if canonical else ["MISSING_CANONICAL_SCORE"],
-        scoring_components=canonical.scoring_components if canonical else {},
+        scoring_components=_current_scoring_components(canonical),
     )
 
 
@@ -1561,7 +1586,7 @@ def get_writing_response(
         score_eligible=canonical.score_eligible if canonical else False,
         manual_review_required=canonical.manual_review_required if canonical else True,
         quality_reasons=canonical.quality_reasons if canonical else ["MISSING_CANONICAL_SCORE"],
-        scoring_components=canonical.current_scoring_components or canonical.scoring_components if canonical else {},
+        scoring_components=_current_scoring_components(canonical),
     )
 
 
@@ -1651,7 +1676,9 @@ def _build_exercise_summaries(db: Session, attempt_id: UUID) -> list[ExerciseSum
                 technical_status=canonical.technical_status.value if canonical else "INVALID",
                 score_eligible=canonical.score_eligible if canonical else False,
                 quality_reasons=canonical.quality_reasons if canonical else ["MISSING_CANONICAL_SCORE"],
-                scoring_components=canonical.current_scoring_components or canonical.scoring_components if canonical else {},
+                scoring_components=_current_scoring_components(canonical),
+                original_scoring_components=_original_scoring_components(canonical),
+                current_scoring_components=_current_scoring_components(canonical),
                 manual_adjustment_applied=canonical.manual_adjustment_applied if canonical else False,
                 teacher_observation=canonical.teacher_observation if canonical else None,
             )
@@ -2061,7 +2088,9 @@ def get_attempt_review(
                 technical_status=canonical.technical_status.value if canonical else "INVALID",
                 score_eligible=canonical.score_eligible if canonical else False,
                 quality_reasons=canonical.quality_reasons if canonical else ["MISSING_CANONICAL_SCORE"],
-                scoring_components=canonical.current_scoring_components or canonical.scoring_components if canonical else {},
+                scoring_components=_current_scoring_components(canonical),
+                original_scoring_components=_original_scoring_components(canonical),
+                current_scoring_components=_current_scoring_components(canonical),
                 manual_adjustment_applied=canonical.manual_adjustment_applied if canonical else False,
                 teacher_observation=canonical.teacher_observation if canonical else None,
                 adjusted_by_teacher_id=canonical.adjusted_by_teacher_id if canonical else None,

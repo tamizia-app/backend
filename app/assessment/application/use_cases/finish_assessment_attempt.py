@@ -248,6 +248,14 @@ class FinishAssessmentAttemptUseCase:
             if included and included_weight_sum
             else None
         )
+        current_components = FinishAssessmentAttemptUseCase._clean_scoring_components(
+            score.current_scoring_components or score.scoring_components if score else {}
+        )
+        original_components = (
+            FinishAssessmentAttemptUseCase._original_scoring_components(score)
+            if score
+            else {}
+        )
         return {
             "scoring_version": SCORING_VERSION_PHASE2_V1,
             "exercise_attempt_id": str(exercise_attempt.id),
@@ -270,9 +278,9 @@ class FinishAssessmentAttemptUseCase:
                 "required": score.manual_review_required if score else True,
                 "reasons": score.quality_reasons if score else ["MISSING_CANONICAL_SCORE"],
             },
-            "scoring_components": score.current_scoring_components or score.scoring_components if score else {},
-            "original_scoring_components": score.original_scoring_components if score else {},
-            "current_scoring_components": score.current_scoring_components or score.scoring_components if score else {},
+            "scoring_components": current_components,
+            "original_scoring_components": original_components,
+            "current_scoring_components": current_components,
             "manual_adjustment_applied": score.manual_adjustment_applied if score else False,
             "teacher_observation": score.teacher_observation if score else None,
             "adjusted_by_teacher_id": str(score.adjusted_by_teacher_id) if score and score.adjusted_by_teacher_id else None,
@@ -297,6 +305,25 @@ class FinishAssessmentAttemptUseCase:
         if score is None:
             return None
         return score.current_score if score.current_score is not None else score.score
+
+    @staticmethod
+    def _clean_scoring_components(components: dict | None) -> dict:
+        cleaned = dict(components or {})
+        cleaned.pop("original_scoring_components", None)
+        return cleaned
+
+    @staticmethod
+    def _original_scoring_components(score: ExerciseScore) -> dict:
+        if score.original_scoring_components:
+            return FinishAssessmentAttemptUseCase._clean_scoring_components(
+                score.original_scoring_components
+            )
+        nested_original = score.scoring_components.get("original_scoring_components")
+        if isinstance(nested_original, dict):
+            return FinishAssessmentAttemptUseCase._clean_scoring_components(
+                nested_original
+            )
+        return {}
 
     @staticmethod
     def _determine_intervention_level(

@@ -336,6 +336,8 @@ class ExerciseSummary(BaseModel):
     score_eligible: bool = False
     quality_reasons: list[str] = []
     scoring_components: dict = {}
+    original_scoring_components: dict = {}
+    current_scoring_components: dict = {}
     manual_adjustment_applied: bool = False
     teacher_observation: str | None = None
 
@@ -705,6 +707,8 @@ class ExerciseReview(BaseModel):
     score_eligible: bool = False
     quality_reasons: list[str] = []
     scoring_components: dict = {}
+    original_scoring_components: dict = {}
+    current_scoring_components: dict = {}
     manual_adjustment_applied: bool = False
     teacher_observation: str | None = None
     adjusted_by_teacher_id: UUID | None = None

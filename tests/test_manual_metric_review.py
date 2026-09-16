@@ -21,8 +21,8 @@ from app.assessment.domain.enums import (
     TechnicalStatus,
 )
 from app.assessment.domain.exercise import AssessmentExercise
-from app.assessment.domain.metrics import AssessmentResult, ExerciseScore, SpeakingMetrics
-from app.assessment.domain.response import SpeakingResponse
+from app.assessment.domain.metrics import AssessmentResult, ExerciseScore, SpeakingMetrics, WritingMetrics
+from app.assessment.domain.response import SpeakingResponse, WritingResponse
 from app.assessment.domain.template import AssessmentTemplateExercise
 
 
@@ -102,6 +102,49 @@ def test_manual_review_high_current_final_score_without_pending_review_stays_low
     assert updated_score.current_score == 90.0
     assert updated_score.manual_adjustment_applied is True
     assert updated_score.manual_review_required is False
+
+    snapshot_row = updated_result.current_scoring_snapshot_json[0]
+    assert snapshot_row["scoring_components"] == snapshot_row["current_scoring_components"]
+    assert snapshot_row["original_scoring_components"] == {"accuracy_score": 50}
+    assert "original_scoring_components" not in snapshot_row["scoring_components"]
+    assert "original_scoring_components" not in snapshot_row["current_scoring_components"]
+    assert snapshot_row["current_scoring_components"]["manual_adjustment_applied"] is True
+    assert snapshot_row["teacher_observation"] == "Revisión resuelta."
+
+
+def test_manual_review_writing_snapshot_components_are_siblings_and_clean():
+    fixture = _writing_fixture()
+
+    fixture.use_case.execute(
+        ManualReviewExerciseAttemptCommand(
+            exercise_attempt_id=fixture.exercise_attempt_id,
+            teacher_id=fixture.teacher_id,
+            metrics={"char_accuracy": 80, "word_accuracy": 60},
+            teacher_observation="Ajuste de escritura.",
+        )
+    )
+
+    updated_result = fixture.result_repo.item
+    updated_score = fixture.score_repo.item
+    assert updated_score.original_score == 87.25
+    assert updated_score.current_score == 75.0
+    assert updated_score.score == updated_score.current_score
+    assert updated_score.manual_adjustment_applied is True
+    assert updated_score.teacher_observation == "Ajuste de escritura."
+    assert updated_score.adjusted_by_teacher_id == fixture.teacher_id
+    assert updated_score.adjusted_at is not None
+    assert updated_result.original_final_score == 87.25
+    assert updated_result.current_final_score == 75.0
+    assert updated_result.final_score == 75.0
+
+    snapshot_row = updated_result.current_scoring_snapshot_json[0]
+    assert snapshot_row["scoring_components"] == snapshot_row["current_scoring_components"]
+    assert snapshot_row["original_scoring_components"] == {"similarity_score": 87.25}
+    assert "original_scoring_components" not in snapshot_row["scoring_components"]
+    assert "original_scoring_components" not in snapshot_row["current_scoring_components"]
+    assert snapshot_row["current_scoring_components"]["similarity_score"] == 75.0
+    assert snapshot_row["current_scoring_components"]["manual_adjustment_applied"] is True
+    assert snapshot_row["teacher_observation"] == "Ajuste de escritura."
 
 
 def test_manual_review_keeps_medium_when_another_included_exercise_is_pending():
@@ -424,6 +467,183 @@ def _fixture(
     )
 
 
+class _WritingFixture:
+    def __init__(self) -> None:
+        now = datetime.now(timezone.utc)
+        self.teacher_id = uuid4()
+        assessment_id = uuid4()
+        self.exercise_attempt_id = uuid4()
+        template_exercise_id = uuid4()
+        exercise_id = uuid4()
+        attempt_id = uuid4()
+        writing_response_id = uuid4()
+
+        self.writing_metrics_repo = _SingleRepo(
+            WritingMetrics(
+                id=uuid4(),
+                writing_response_id=writing_response_id,
+                confidence_avg=0.98,
+                cer=0.059,
+                wer=0.333,
+                similarity_score=87.25,
+                raw_ocr_result_json=None,
+                created_at=now,
+                updated_at=now,
+                original_char_accuracy=94.1,
+                current_char_accuracy=94.1,
+                original_word_accuracy=66.7,
+                current_word_accuracy=66.7,
+                original_similarity_score=87.25,
+                current_similarity_score=87.25,
+            )
+        )
+        primary_score = ExerciseScore(
+            id=uuid4(),
+            exercise_attempt_id=self.exercise_attempt_id,
+            exercise_type=ExerciseType.READING_WRITING,
+            score=87.25,
+            score_eligible=True,
+            technical_status=TechnicalStatus.VALID,
+            manual_review_required=False,
+            quality_reasons=[],
+            scoring_components={
+                "similarity_score": 87.25,
+                "original_scoring_components": {"similarity_score": 87.25},
+            },
+            created_at=now,
+            updated_at=now,
+            original_score=87.25,
+            current_score=87.25,
+            original_scoring_components={"similarity_score": 87.25},
+            current_scoring_components={
+                "similarity_score": 87.25,
+                "original_scoring_components": {"similarity_score": 87.25},
+            },
+        )
+        exercise_attempts = [
+            ExerciseAttempt(
+                id=self.exercise_attempt_id,
+                assessment_attempt_id=attempt_id,
+                template_exercise_id=template_exercise_id,
+                status=ExerciseAttemptStatus.ANSWERED,
+                started_at=now,
+                submitted_at=now,
+                created_at=now,
+                updated_at=now,
+            )
+        ]
+        self.score_repo = _ScoreRepo([primary_score])
+        self.result_repo = _ResultRepo(
+            AssessmentResult(
+                id=uuid4(),
+                assessment_attempt_id=attempt_id,
+                final_score=87.25,
+                max_score=100.0,
+                mc_correct_count=0,
+                os_correct_count=0,
+                speaking_completed_count=0,
+                writing_completed_count=1,
+                intervention_level=InterventionLevel.LOW,
+                generated_at=now,
+                created_at=now,
+                updated_at=now,
+                speaking_average_score=None,
+                speaking_review_required_count=0,
+                total_exercises=1,
+                evaluated_exercises=1,
+                pending_exercises=0,
+                writing_average_score=87.25,
+                writing_review_required_count=0,
+                score_denominator=2,
+                scoring_snapshot_json=[],
+                original_final_score=87.25,
+                current_final_score=87.25,
+                original_scoring_snapshot_json=[],
+                current_scoring_snapshot_json=[],
+            )
+        )
+        self.use_case = ManualReviewExerciseAttemptUseCase(
+            exercise_attempt_repo=_ExerciseAttemptRepo(exercise_attempts),
+            assessment_attempt_repo=_ByIdRepo(
+                AssessmentAttempt(
+                    id=attempt_id,
+                    assessment_id=assessment_id,
+                    student_id=uuid4(),
+                    status=AttemptStatus.COMPLETED,
+                    started_at=now,
+                    completed_at=now,
+                    created_at=now,
+                    updated_at=now,
+                )
+            ),
+            assessment_repo=_ByIdRepo(
+                Assessment(
+                    id=assessment_id,
+                    template_id=uuid4(),
+                    classroom_id=uuid4(),
+                    homeroom_teacher_id=self.teacher_id,
+                    title=None,
+                    status=AssessmentStatus.ACTIVE,
+                    scheduled_at=None,
+                    created_at=now,
+                    updated_at=now,
+                )
+            ),
+            template_exercise_repo=_MapRepo(
+                {
+                    template_exercise_id: AssessmentTemplateExercise(
+                        id=template_exercise_id,
+                        template_id=uuid4(),
+                        exercise_id=exercise_id,
+                        order_index=1,
+                        points=2,
+                        is_required=True,
+                        created_at=now,
+                        updated_at=now,
+                    )
+                }
+            ),
+            exercise_repo=_MapRepo(
+                {
+                    exercise_id: AssessmentExercise(
+                        id=exercise_id,
+                        type=ExerciseType.READING_WRITING,
+                        title="Escritura",
+                        instructions=None,
+                        stimulus_type=None,
+                        response_type=None,
+                        difficulty_level=None,
+                        is_active=True,
+                        created_by_teacher_id=None,
+                        created_at=now,
+                        updated_at=now,
+                    )
+                }
+            ),
+            exercise_score_repo=self.score_repo,
+            speaking_response_repo=_EmptyRepo(),
+            speaking_metrics_repo=_EmptyRepo(),
+            writing_response_repo=_ExerciseResponseRepo(
+                WritingResponse(
+                    id=writing_response_id,
+                    exercise_attempt_id=self.exercise_attempt_id,
+                    image_blob_path="writing.png",
+                    original_filename=None,
+                    content_type=None,
+                    recognized_text=None,
+                    created_at=now,
+                    updated_at=now,
+                )
+            ),
+            writing_metrics_repo=self.writing_metrics_repo,
+            result_repo=self.result_repo,
+        )
+
+
+def _writing_fixture() -> _WritingFixture:
+    return _WritingFixture()
+
+
 class _ByIdRepo:
     def __init__(self, item) -> None:
         self.item = item
@@ -465,6 +685,9 @@ class _SingleRepo:
 
     def find_by_speaking_response_id(self, response_id: UUID):
         return self.item if self.item.speaking_response_id == response_id else None
+
+    def find_by_writing_response_id(self, response_id: UUID):
+        return self.item if self.item.writing_response_id == response_id else None
 
     def update(self, item):
         self.item = item
