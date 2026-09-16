@@ -51,7 +51,7 @@ def upgrade() -> None:
     op.add_column("assessment_exercise_scores", sa.Column("adjusted_by_teacher_id", sa.Uuid(), nullable=True))
     op.add_column("assessment_exercise_scores", sa.Column("adjusted_at", sa.DateTime(timezone=True), nullable=True))
     op.create_foreign_key(
-        "fk_assessment_exercise_scores_adjusted_by_teacher_id_teachers_iam",
+        "fk_ex_scores_adjusted_teacher",
         "assessment_exercise_scores",
         "teachers_iam",
         ["adjusted_by_teacher_id"],
@@ -144,7 +144,7 @@ def downgrade() -> None:
     op.drop_column("assessment_results", "original_final_score")
 
     op.drop_constraint(
-        "fk_assessment_exercise_scores_adjusted_by_teacher_id_teachers_iam",
+        "fk_ex_scores_adjusted_teacher",
         "assessment_exercise_scores",
         type_="foreignkey",
     )
