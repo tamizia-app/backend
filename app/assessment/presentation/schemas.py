@@ -24,6 +24,28 @@ class TemplateResponse(BaseModel):
     updated_at: datetime
 
 
+class TemplateExerciseDetail(BaseModel):
+    template_exercise_id: UUID
+    exercise_id: UUID
+    order_index: int
+    points: int
+    weight_label: str
+    is_required: bool
+    type: str
+    title: str
+    instructions: str | None = None
+    stimulus_type: str | None = None
+    response_type: str | None = None
+    difficulty_level: int | None = None
+    details: dict = {}
+
+
+class TemplateDetailResponse(TemplateResponse):
+    exercise_count: int
+    total_points: int
+    exercises: list[TemplateExerciseDetail] = []
+
+
 class MCAnswerOptionData(BaseModel):
     text: str = Field(min_length=1, max_length=255)
     is_correct: bool = False

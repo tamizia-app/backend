@@ -250,6 +250,199 @@ def test_create_template(client, teacher_headers):
     assert data["template_id"] is not None
 
 
+def test_list_templates_keeps_simple_metadata_without_exercises(client, teacher_headers):
+    response = client.post(
+        "/api/v1/assessments/templates",
+        headers=teacher_headers,
+        json={"name": "Listado simple", "version": 1},
+    )
+    assert response.status_code == 201
+
+    list_response = client.get("/api/v1/assessments/templates", headers=teacher_headers)
+
+    assert list_response.status_code == 200
+    item = next(
+        template
+        for template in list_response.json()
+        if template["template_id"] == response.json()["template_id"]
+    )
+    assert "exercises" not in item
+    assert "exercise_count" not in item
+    assert "total_points" not in item
+
+
+def test_get_template_detail_returns_ordered_exercises_with_details(client, teacher_headers):
+    template_id = client.post(
+        "/api/v1/assessments/templates",
+        headers=teacher_headers,
+        json={"name": "Detalle plantilla", "description": "Con ejercicios", "version": 1},
+    ).json()["template_id"]
+
+    mc = _create_exercise_via_api(
+        client,
+        teacher_headers,
+        {
+            "type": "MULTIPLE_CHOICE",
+            "title": "9A - Seleccion multiple - bravo",
+            "instructions": "Selecciona la palabra correcta.",
+            "stimulus_type": "TEXT",
+            "response_type": "SELECTION",
+            "difficulty_level": 3,
+            "mc_question": {
+                "question_text": "Selecciona la palabra escrita correctamente.",
+                "options": [
+                    {"text": "barvo", "is_correct": False, "order_index": 2},
+                    {"text": "bravo", "is_correct": True, "order_index": 1},
+                ],
+            },
+        },
+    )
+    os_exercise = _create_exercise_via_api(
+        client,
+        teacher_headers,
+        {
+            "type": "ORDER_SYLLABLES",
+            "title": "9A - Ordenar silabas - platano",
+            "instructions": "Ordena las sílabas para formar la palabra.",
+            "stimulus_type": "TEXT",
+            "response_type": "ORDERING",
+            "difficulty_level": 3,
+            "os_question": {
+                "question_text": "Ordena las sílabas para formar la palabra.",
+                "correct_word": "platano",
+                "syllables_json": ["pla", "ta", "no"],
+            },
+        },
+    )
+    speaking = _create_exercise_via_api(
+        client,
+        teacher_headers,
+        {
+            "type": "READING_SPEAKING",
+            "title": "9A - Lectura oral - trabajo",
+            "instructions": "Lee en voz alta el texto mostrado.",
+            "stimulus_type": "TEXT",
+            "response_type": "AUDIO",
+            "difficulty_level": 3,
+            "prompt_exercise": {
+                "prompt_text": "Lee en voz alta.",
+                "text_to_show": "trabajo",
+                "language_code": "es-PE",
+                "expected_text": "trabajo",
+            },
+        },
+    )
+    writing = _create_exercise_via_api(
+        client,
+        teacher_headers,
+        {
+            "type": "READING_WRITING",
+            "title": "9A - Escritura - mi hermano escribe una carta corta",
+            "instructions": "Copia el texto mostrado.",
+            "stimulus_type": "TEXT",
+            "response_type": "IMAGE",
+            "difficulty_level": 3,
+            "prompt_exercise": {
+                "prompt_text": "Copia el texto.",
+                "text_to_show": "mi hermano escribe una carta corta",
+                "language_code": "es-PE",
+                "expected_text": "mi hermano escribe una carta corta",
+            },
+        },
+    )
+    for exercise_id, order_index, points, is_required in (
+        (speaking["exercise_id"], 3, 3, False),
+        (mc["exercise_id"], 1, 1, True),
+        (writing["exercise_id"], 4, 3, True),
+        (os_exercise["exercise_id"], 2, 2, True),
+    ):
+        attach = client.post(
+            f"/api/v1/assessments/templates/{template_id}/exercises",
+            headers=teacher_headers,
+            json={
+                "exercise_id": exercise_id,
+                "order_index": order_index,
+                "points": points,
+                "is_required": is_required,
+            },
+        )
+        assert attach.status_code == 201
+
+    response = client.get(f"/api/v1/assessments/templates/{template_id}", headers=teacher_headers)
+
+    assert response.status_code == 200
+    data = response.json()
+    assert data["template_id"] == template_id
+    assert data["exercise_count"] == 4
+    assert data["total_points"] == 9
+    assert [exercise["order_index"] for exercise in data["exercises"]] == [1, 2, 3, 4]
+    assert [exercise["weight_label"] for exercise in data["exercises"]] == [
+        "Complementario",
+        "Medio",
+        "Principal",
+        "Principal",
+    ]
+
+    mc_detail = data["exercises"][0]
+    assert mc_detail["type"] == "MULTIPLE_CHOICE"
+    assert mc_detail["details"]["question_text"] == "Selecciona la palabra escrita correctamente."
+    assert mc_detail["details"]["image_url"] is None
+    assert [option["text"] for option in mc_detail["details"]["options"]] == ["bravo", "barvo"]
+    assert mc_detail["details"]["options"][0]["is_correct"] is True
+
+    os_detail = data["exercises"][1]
+    assert os_detail["type"] == "ORDER_SYLLABLES"
+    assert os_detail["details"] == {
+        "question_text": "Ordena las sílabas para formar la palabra.",
+        "correct_word": "platano",
+        "syllables": ["pla", "ta", "no"],
+    }
+
+    speaking_detail = data["exercises"][2]
+    assert speaking_detail["is_required"] is False
+    assert speaking_detail["details"] == {"expected_text": "trabajo"}
+
+    writing_detail = data["exercises"][3]
+    assert writing_detail["type"] == "READING_WRITING"
+    assert writing_detail["details"] == {
+        "expected_text": "mi hermano escribe una carta corta"
+    }
+
+
+def test_get_template_detail_without_exercises_returns_empty_collection(client, teacher_headers):
+    template_id = client.post(
+        "/api/v1/assessments/templates",
+        headers=teacher_headers,
+        json={"name": "Plantilla vacia", "version": 1},
+    ).json()["template_id"]
+
+    response = client.get(f"/api/v1/assessments/templates/{template_id}", headers=teacher_headers)
+
+    assert response.status_code == 200
+    assert response.json()["exercise_count"] == 0
+    assert response.json()["total_points"] == 0
+    assert response.json()["exercises"] == []
+
+
+def test_get_template_detail_not_found(client, teacher_headers):
+    response = client.get(
+        f"/api/v1/assessments/templates/{uuid.uuid4()}",
+        headers=teacher_headers,
+    )
+
+    assert response.status_code == 404
+
+
+def _create_exercise_via_api(client, teacher_headers, payload: dict) -> dict:
+    response = client.post(
+        "/api/v1/assessments/exercises",
+        headers=teacher_headers,
+        json=payload,
+    )
+    assert response.status_code == 201
+    return response.json()
+
+
 def test_create_exercise_mc(client, teacher_headers):
     response = client.post(
         "/api/v1/assessments/exercises",

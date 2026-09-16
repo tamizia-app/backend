@@ -178,6 +178,8 @@ from app.assessment.presentation.schemas import (
     SubmitOSResponseRequest,
     TemplateExercisePointsResponse,
     TemplateExercisePointsUpdateRequest,
+    TemplateDetailResponse,
+    TemplateExerciseDetail,
     TemplateResponse,
     WritingMetricsResponse,
     WritingMetricsReview,
@@ -377,6 +379,131 @@ def _template_response(template) -> TemplateResponse:
     )
 
 
+def _template_exercise_weight_label(points: int) -> str:
+    return {
+        1: "Complementario",
+        2: "Medio",
+        3: "Principal",
+    }.get(points, "Personalizado")
+
+
+def _template_exercise_details(
+    exercise,
+    *,
+    mc_q_repo,
+    mc_opt_repo,
+    os_q_repo,
+    os_a_repo,
+    prompt_repo,
+    expected_repo,
+) -> dict:
+    if exercise.type == ExerciseType.MULTIPLE_CHOICE:
+        question = mc_q_repo.find_by_exercise_id(exercise.id)
+        if not question:
+            return {"question_text": None, "options": [], "image_url": None}
+        image_url = None
+        if question.image_blob_path:
+            try:
+                image_url = AzureAssessmentBlobStorage(get_settings()).download_url(
+                    blob_path=question.image_blob_path
+                )
+            except Exception:
+                pass
+        return {
+            "question_text": question.question_text,
+            "options": [
+                {
+                    "option_id": option.id,
+                    "text": option.text,
+                    "order_index": option.order_index,
+                    "is_correct": option.is_correct,
+                }
+                for option in mc_opt_repo.find_by_question_id(question.id)
+            ],
+            "image_url": image_url,
+        }
+
+    if exercise.type == ExerciseType.ORDER_SYLLABLES:
+        question = os_q_repo.find_by_exercise_id(exercise.id)
+        answer = os_a_repo.find_by_question_id(question.id) if question else None
+        return {
+            "question_text": question.question_text if question else None,
+            "correct_word": answer.correct_word if answer else None,
+            "syllables": answer.syllables_json if answer else [],
+        }
+
+    if exercise.type in (
+        ExerciseType.READING_SPEAKING,
+        ExerciseType.LISTENING_SPEAKING,
+        ExerciseType.READING_WRITING,
+        ExerciseType.LISTENING_WRITING,
+    ):
+        prompt = prompt_repo.find_by_exercise_id(exercise.id)
+        expected = expected_repo.find_by_prompt_exercise_id(prompt.id) if prompt else None
+        return {
+            "expected_text": expected.expected_text if expected else None,
+        }
+
+    return {}
+
+
+def _template_detail_response(template, db: Session) -> TemplateDetailResponse:
+    template_exercise_repo = SQLAlchemyTemplateExerciseRepository(db)
+    exercise_repo = SQLAlchemyExerciseRepository(db)
+    mc_q_repo = SQLAlchemyMCQuestionRepository(db)
+    mc_opt_repo = SQLAlchemyMCAnswerOptionRepository(db)
+    os_q_repo = SQLAlchemyOSQuestionRepository(db)
+    os_a_repo = SQLAlchemyOSAnswerRepository(db)
+    prompt_repo = SQLAlchemyPromptExerciseRepository(db)
+    expected_repo = SQLAlchemyExpectedAnswerRepository(db)
+
+    exercises: list[TemplateExerciseDetail] = []
+    for template_exercise in template_exercise_repo.find_by_template_id(template.id):
+        exercise = exercise_repo.find_by_id(template_exercise.exercise_id)
+        if not exercise:
+            continue
+        exercises.append(
+            TemplateExerciseDetail(
+                template_exercise_id=template_exercise.id,
+                exercise_id=exercise.id,
+                order_index=template_exercise.order_index,
+                points=template_exercise.points,
+                weight_label=_template_exercise_weight_label(template_exercise.points),
+                is_required=template_exercise.is_required,
+                type=exercise.type.value,
+                title=exercise.title,
+                instructions=exercise.instructions,
+                stimulus_type=exercise.stimulus_type,
+                response_type=exercise.response_type,
+                difficulty_level=exercise.difficulty_level,
+                details=_template_exercise_details(
+                    exercise,
+                    mc_q_repo=mc_q_repo,
+                    mc_opt_repo=mc_opt_repo,
+                    os_q_repo=os_q_repo,
+                    os_a_repo=os_a_repo,
+                    prompt_repo=prompt_repo,
+                    expected_repo=expected_repo,
+                ),
+            )
+        )
+
+    exercises.sort(key=lambda item: item.order_index)
+    return TemplateDetailResponse(
+        template_id=template.id,
+        name=template.name,
+        description=template.description,
+        version=template.version,
+        is_active=template.is_active,
+        created_by_teacher_id=template.created_by_teacher_id,
+        created_at=template.created_at,
+        updated_at=template.updated_at,
+        exercise_count=len(exercises),
+        total_points=sum(exercise.points for exercise in exercises),
+        exercises=exercises,
+    )
+
+
 # ─── Template endpoints ───────────────────────────────────────
 
 
@@ -435,27 +562,18 @@ def list_templates(
     ]
 
 
-@router.get("/templates/{template_id}", response_model=TemplateResponse)
+@router.get("/templates/{template_id}", response_model=TemplateDetailResponse)
 def get_template(
     template_id: UUID,
     db: Session = Depends(get_db),
     current_user: UserModel = Depends(get_current_user),
-) -> TemplateResponse:
+) -> TemplateDetailResponse:
     teacher_id = _resolve_teacher_id(db, current_user.id)
     repo = SQLAlchemyTemplateRepository(db)
     template = repo.find_accessible_by_id(template_id, teacher_id)
     if not template:
         raise HTTPException(status_code=404, detail="Template not found")
-    return TemplateResponse(
-        template_id=template.id,
-        name=template.name,
-        description=template.description,
-        version=template.version,
-        is_active=template.is_active,
-        created_by_teacher_id=template.created_by_teacher_id,
-        created_at=template.created_at,
-        updated_at=template.updated_at,
-    )
+    return _template_detail_response(template, db)
 
 
 @router.patch("/templates/{template_id}/deactivate", response_model=TemplateResponse)
