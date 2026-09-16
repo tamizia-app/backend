@@ -313,6 +313,38 @@ def _clean_scoring_components(components: dict | None) -> dict:
     return cleaned
 
 
+def _clean_scoring_snapshot(scoring_snapshot: list[dict] | None) -> list[dict]:
+    cleaned_snapshot = []
+    for row in scoring_snapshot or []:
+        if not isinstance(row, dict):
+            cleaned_snapshot.append(row)
+            continue
+        cleaned_row = dict(row)
+        original_components = cleaned_row.get("original_scoring_components")
+        scoring_components = cleaned_row.get("scoring_components")
+        current_components = cleaned_row.get("current_scoring_components")
+
+        if not isinstance(original_components, dict):
+            nested_original = None
+            if isinstance(scoring_components, dict):
+                nested_original = scoring_components.get("original_scoring_components")
+            if not isinstance(nested_original, dict) and isinstance(current_components, dict):
+                nested_original = current_components.get("original_scoring_components")
+            if isinstance(nested_original, dict):
+                original_components = nested_original
+
+        cleaned_current_components = _clean_scoring_components(
+            current_components if isinstance(current_components, dict) else scoring_components
+        )
+        cleaned_row["scoring_components"] = cleaned_current_components
+        cleaned_row["current_scoring_components"] = cleaned_current_components
+        cleaned_row["original_scoring_components"] = _clean_scoring_components(
+            original_components if isinstance(original_components, dict) else {}
+        )
+        cleaned_snapshot.append(cleaned_row)
+    return cleaned_snapshot
+
+
 def _current_scoring_components(canonical) -> dict:
     if not canonical:
         return {}
@@ -1711,7 +1743,7 @@ def finish_attempt(
 
     exercise_summaries = _build_exercise_summaries(db, attempt_id)
 
-    scoring_snapshot = result.scoring_snapshot_json or []
+    scoring_snapshot = _clean_scoring_snapshot(result.scoring_snapshot_json)
     scoring_contract = _phase2_scoring_contract(
         scoring_snapshot,
         score_denominator=result.score_denominator,
@@ -1763,7 +1795,9 @@ def get_result(
 
     exercise_summaries = _build_exercise_summaries(db, attempt_id)
 
-    scoring_snapshot = result.current_scoring_snapshot or result.scoring_snapshot or []
+    scoring_snapshot = _clean_scoring_snapshot(
+        result.current_scoring_snapshot or result.scoring_snapshot
+    )
     scoring_contract = _phase2_scoring_contract(
         scoring_snapshot,
         score_denominator=result.score_denominator,
@@ -1842,7 +1876,9 @@ def get_attempt_review(
     result = result_repo.find_by_attempt_id(attempt_id)
     result_response = None
     if result:
-        scoring_snapshot = result.current_scoring_snapshot_json or result.scoring_snapshot_json or []
+        scoring_snapshot = _clean_scoring_snapshot(
+            result.current_scoring_snapshot_json or result.scoring_snapshot_json
+        )
         scoring_contract = _phase2_scoring_contract(
             scoring_snapshot,
             score_denominator=result.score_denominator,

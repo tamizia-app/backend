@@ -24,6 +24,10 @@ from app.assessment.domain.exercise import AssessmentExercise
 from app.assessment.domain.metrics import AssessmentResult, ExerciseScore, SpeakingMetrics, WritingMetrics
 from app.assessment.domain.response import SpeakingResponse, WritingResponse
 from app.assessment.domain.template import AssessmentTemplateExercise
+from app.assessment.presentation.routes import (
+    _clean_scoring_snapshot,
+    _current_scoring_components,
+)
 
 
 def test_manual_review_speaking_updates_current_only_and_recalculates_score():
@@ -145,6 +149,80 @@ def test_manual_review_writing_snapshot_components_are_siblings_and_clean():
     assert snapshot_row["current_scoring_components"]["similarity_score"] == 75.0
     assert snapshot_row["current_scoring_components"]["manual_adjustment_applied"] is True
     assert snapshot_row["teacher_observation"] == "Ajuste de escritura."
+
+
+def test_result_serialization_cleans_nested_original_components_in_snapshot_and_summaries():
+    dirty_snapshot = [
+        {
+            "exercise_type": "READING_SPEAKING",
+            "score": 88.65,
+            "original_score": 97.78,
+            "current_score": 88.65,
+            "scoring_components": {
+                "accuracy_score": 90,
+                "manual_adjustment_applied": True,
+                "original_scoring_components": {"accuracy_score": 97.78},
+            },
+            "current_scoring_components": {
+                "accuracy_score": 90,
+                "manual_adjustment_applied": True,
+                "original_scoring_components": {"accuracy_score": 97.78},
+            },
+        },
+        {
+            "exercise_type": "READING_WRITING",
+            "score": 75.0,
+            "original_score": 87.25,
+            "current_score": 75.0,
+            "original_scoring_components": {"similarity_score": 87.25},
+            "scoring_components": {
+                "similarity_score": 75.0,
+                "manual_adjustment_applied": True,
+                "original_scoring_components": {"similarity_score": 87.25},
+            },
+            "current_scoring_components": {
+                "similarity_score": 75.0,
+                "manual_adjustment_applied": True,
+                "original_scoring_components": {"similarity_score": 87.25},
+            },
+        },
+    ]
+
+    cleaned_snapshot = _clean_scoring_snapshot(dirty_snapshot)
+
+    for row in cleaned_snapshot:
+        assert "original_scoring_components" in row
+        assert "original_scoring_components" not in row["scoring_components"]
+        assert "original_scoring_components" not in row["current_scoring_components"]
+        assert row["scoring_components"] == row["current_scoring_components"]
+
+    assert cleaned_snapshot[0]["original_scoring_components"] == {"accuracy_score": 97.78}
+    assert cleaned_snapshot[1]["original_scoring_components"] == {"similarity_score": 87.25}
+
+    dirty_summary_score = ExerciseScore(
+        id=uuid4(),
+        exercise_attempt_id=uuid4(),
+        exercise_type=ExerciseType.READING_SPEAKING,
+        score=88.65,
+        score_eligible=True,
+        technical_status=TechnicalStatus.VALID,
+        manual_review_required=False,
+        quality_reasons=[],
+        scoring_components={},
+        created_at=datetime.now(timezone.utc),
+        updated_at=datetime.now(timezone.utc),
+        original_score=97.78,
+        current_score=88.65,
+        original_scoring_components={"accuracy_score": 97.78},
+        current_scoring_components={
+            "accuracy_score": 90,
+            "manual_adjustment_applied": True,
+            "original_scoring_components": {"accuracy_score": 97.78},
+        },
+    )
+    summary_components = _current_scoring_components(dirty_summary_score)
+    assert "original_scoring_components" not in summary_components
+    assert summary_components["manual_adjustment_applied"] is True
 
 
 def test_manual_review_keeps_medium_when_another_included_exercise_is_pending():
