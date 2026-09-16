@@ -377,6 +377,61 @@ def test_invalid_exercise_is_excluded_when_coverage_and_domains_are_sufficient()
     assert excluded["result_status"] == "COMPLETED_WITH_WARNINGS"
     assert excluded["has_warnings"] is True
     assert "INVALID_EXERCISES" in excluded["warning_reasons"]
+    assert result.intervention_level.value == "LOW"
+
+
+def test_high_final_score_with_manual_review_warning_keeps_low_intervention():
+    uc = _finish_use_case(
+        [
+            _row(
+                ExerciseType.READING_SPEAKING,
+                score=85,
+                points=3,
+                technical_status=TechnicalStatus.PARTIAL,
+                manual_review_required=True,
+                quality_reasons=[
+                    "ASR_AZURE_TRANSCRIPT_DIVERGENCE",
+                    "HIGH_WORD_ERROR_RATE",
+                    "LOW_LEXICAL_MATCH",
+                ],
+            ),
+            _row(ExerciseType.READING_WRITING, score=100, points=3),
+            _row(ExerciseType.MULTIPLE_CHOICE, score=100, points=3),
+        ]
+    )
+
+    result = uc.execute(FinishAssessmentAttemptCommand(attempt_id=uc.attempt_id))
+
+    assert result.final_score == 95.0
+    assert result.intervention_level.value == "LOW"
+    row = result.scoring_snapshot_json[0]
+    assert row["result_status"] == "COMPLETED_WITH_WARNINGS"
+    assert row["has_warnings"] is True
+    assert row["partial_exercise_count"] == 1
+    assert "PARTIAL_EXERCISES" in row["warning_reasons"]
+    assert "MANUAL_REVIEW_REQUIRED" in row["warning_reasons"]
+
+
+def test_medium_final_score_uses_score_threshold_only():
+    uc = _finish_use_case(
+        [
+            _row(ExerciseType.READING_SPEAKING, score=70, points=3),
+            _row(ExerciseType.READING_WRITING, score=70, points=3),
+            _row(
+                ExerciseType.MULTIPLE_CHOICE,
+                score=70,
+                points=3,
+                manual_review_required=True,
+                quality_reasons=["LOW_TEXT_SIMILARITY"],
+            ),
+        ]
+    )
+
+    result = uc.execute(FinishAssessmentAttemptCommand(attempt_id=uc.attempt_id))
+
+    assert result.final_score == 70.0
+    assert result.intervention_level.value == "MEDIUM"
+    assert result.scoring_snapshot_json[0]["result_status"] == "COMPLETED_WITH_WARNINGS"
 
 
 def test_low_scores_with_technical_evidence_finish_with_high_intervention():

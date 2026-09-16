@@ -408,11 +408,7 @@ class FinishAssessmentAttemptUseCase:
         writing_review_required_count: int = 0,
     ) -> InterventionLevel:
         if final_score >= 80:
-            if review_required_count > 0:
-                return InterventionLevel.MEDIUM
             return InterventionLevel.LOW
         if final_score >= 50:
-            if writing_review_required_count > 0 and final_score < 70:
-                return InterventionLevel.HIGH
             return InterventionLevel.MEDIUM
         return InterventionLevel.HIGH

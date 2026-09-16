@@ -225,7 +225,7 @@ def test_result_serialization_cleans_nested_original_components_in_snapshot_and_
     assert summary_components["manual_adjustment_applied"] is True
 
 
-def test_manual_review_keeps_medium_when_another_included_exercise_is_pending():
+def test_manual_review_high_score_stays_low_when_another_included_exercise_is_pending():
     fixture = _fixture(
         TechnicalStatus.VALID,
         score_eligible=True,
@@ -248,9 +248,11 @@ def test_manual_review_keeps_medium_when_another_included_exercise_is_pending():
     )
 
     assert fixture.result_repo.item.final_score == 90.0
-    assert fixture.result_repo.item.intervention_level == InterventionLevel.MEDIUM
+    assert fixture.result_repo.item.intervention_level == InterventionLevel.LOW
     assert fixture.result_repo.item.speaking_review_required_count == 0
     assert fixture.result_repo.item.writing_review_required_count == 1
+    assert fixture.result_repo.item.current_scoring_snapshot_json[0]["result_status"] == "COMPLETED_WITH_WARNINGS"
+    assert "MANUAL_REVIEW_REQUIRED" in fixture.result_repo.item.current_scoring_snapshot_json[0]["warning_reasons"]
 
 
 def test_manual_review_score_threshold_can_change_intervention_level():
