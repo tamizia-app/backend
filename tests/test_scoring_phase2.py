@@ -243,6 +243,25 @@ def test_final_score_uses_weighted_points_and_snapshot_traceability():
     assert row["intervention_level_status"] == "provisional"
 
 
+def test_final_score_uses_current_scores_and_initializes_original_current_result():
+    uc = _finish_use_case(
+        [
+            _row(ExerciseType.READING_SPEAKING, score=40, current_score=90, points=1),
+            _row(ExerciseType.READING_WRITING, score=40, current_score=80, points=3),
+        ]
+    )
+
+    result = uc.execute(FinishAssessmentAttemptCommand(attempt_id=uc.attempt_id))
+
+    assert result.final_score == 82.5
+    assert result.original_final_score == 82.5
+    assert result.current_final_score == 82.5
+    assert result.scoring_snapshot_json[0]["original_score"] == 40
+    assert result.scoring_snapshot_json[0]["current_score"] == 90
+    assert result.original_scoring_snapshot_json == result.scoring_snapshot_json
+    assert result.current_scoring_snapshot_json == result.scoring_snapshot_json
+
+
 def test_optional_invalid_is_excluded_and_lowers_weight_coverage():
     uc = _finish_use_case(
         [
@@ -538,6 +557,7 @@ def _row(
     *,
     score: float | None,
     points: int,
+    current_score: float | None = None,
     is_required: bool = True,
     score_eligible: bool = True,
     technical_status: TechnicalStatus = TechnicalStatus.VALID,
@@ -548,6 +568,7 @@ def _row(
         "exercise_id": uuid4(),
         "exercise_type": exercise_type,
         "score": score,
+        "current_score": current_score,
         "points": points,
         "is_required": is_required,
         "score_eligible": score_eligible,
@@ -622,6 +643,15 @@ def _finish_use_case(rows: list[dict]) -> FinishAssessmentAttemptUseCase:
                 scoring_components={"is_correct": row["score"] == 100},
                 created_at=now,
                 updated_at=now,
+                original_score=row["score"],
+                current_score=row["current_score"] if row["current_score"] is not None else row["score"],
+                original_scoring_components={"is_correct": row["score"] == 100},
+                current_scoring_components={
+                    "is_correct": (
+                        row["current_score"] if row["current_score"] is not None else row["score"]
+                    )
+                    == 100
+                },
             )
         )
 

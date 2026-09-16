@@ -329,16 +329,22 @@ class ExerciseSummary(BaseModel):
     title: str
     status: str
     score: float | None = None
+    original_score: float | None = None
+    current_score: float | None = None
     review_required: bool = False
     technical_status: str = "INVALID"
     score_eligible: bool = False
     quality_reasons: list[str] = []
     scoring_components: dict = {}
+    manual_adjustment_applied: bool = False
+    teacher_observation: str | None = None
 
 
 class AssessmentResultResponse(BaseModel):
     attempt_id: UUID
     final_score: float | None
+    original_final_score: float | None = None
+    current_final_score: float | None = None
     max_score: float | None
     mc_correct_count: int | None
     os_correct_count: int | None
@@ -644,6 +650,8 @@ class SpeakingMetricsReview(BaseModel):
     prosody_score: float | None = None
     lexical_match: float | None = None
     wer_percentage: float | None = None
+    original_metrics: dict | None = None
+    current_metrics: dict | None = None
 
 
 class WritingResponseReview(BaseModel):
@@ -670,6 +678,8 @@ class WritingMetricsReview(BaseModel):
     average_speed: float | None = None
     speed_variability: float | None = None
     writing_area_usage: float | None = None
+    original_metrics: dict | None = None
+    current_metrics: dict | None = None
 
 
 class ExerciseReview(BaseModel):
@@ -681,6 +691,8 @@ class ExerciseReview(BaseModel):
     instructions: str | None = None
     status: str
     score: float | None = None
+    original_score: float | None = None
+    current_score: float | None = None
     question_text: str | None = None
     prompt_text: str | None = None
     reference_text: str | None = None
@@ -693,6 +705,10 @@ class ExerciseReview(BaseModel):
     score_eligible: bool = False
     quality_reasons: list[str] = []
     scoring_components: dict = {}
+    manual_adjustment_applied: bool = False
+    teacher_observation: str | None = None
+    adjusted_by_teacher_id: UUID | None = None
+    adjusted_at: datetime | None = None
 
 
 class ReviewResultResponse(BaseModel):
@@ -704,3 +720,23 @@ class ReviewResultResponse(BaseModel):
     assessment: dict | None = None
     result: AssessmentResultResponse | None = None
     exercise_reviews: list[ExerciseReview] = []
+
+
+class ManualReviewRequest(BaseModel):
+    metrics: dict[str, float] = Field(min_length=1)
+    teacher_observation: str | None = None
+
+
+class ManualReviewResponse(BaseModel):
+    exercise_attempt_id: UUID
+    exercise_type: str
+    original_score: float | None = None
+    current_score: float | None = None
+    original_metrics: dict[str, float | None]
+    current_metrics: dict[str, float | None]
+    score_eligible: bool
+    manual_adjustment_applied: bool
+    teacher_observation: str | None = None
+    adjusted_by_teacher_id: UUID | None = None
+    adjusted_at: datetime | None = None
+    assessment_result: dict[str, float | None] | None = None

@@ -66,6 +66,7 @@ class FinishAssessmentAttemptUseCase:
             )
             exercise = self._exercise_repo.find_by_id(template_exercise.exercise_id)
             score = canonical.get(exercise_attempt.id)
+            current_score = self._current_score(score)
             rows.append((exercise_attempt, template_exercise, exercise, score))
             try:
                 validate_template_exercise_points(template_exercise.points)
@@ -75,7 +76,7 @@ class FinishAssessmentAttemptUseCase:
                     "legacy templates must be corrected before finishing."
                 )
             if template_exercise.is_required and (
-                score is None or not score.score_eligible or score.score is None
+                score is None or not score.score_eligible or current_score is None
             ):
                 blocking.append(
                     {
@@ -112,7 +113,7 @@ class FinishAssessmentAttemptUseCase:
         included_rows = [
             (exercise_attempt, template_exercise, exercise, score)
             for exercise_attempt, template_exercise, exercise, score in rows
-            if score and score.score_eligible and score.score is not None
+            if score and score.score_eligible and self._current_score(score) is not None
         ]
         included = [score for *_, score in included_rows]
         if not included_rows:
@@ -121,7 +122,7 @@ class FinishAssessmentAttemptUseCase:
         included_weight_sum = sum(template_exercise.points for _, template_exercise, _, _ in included_rows)
         total_template_weight_sum = sum(template_exercise.points for _, template_exercise, _, _ in rows)
         final_score = (
-            sum(score.score * template_exercise.points for _, template_exercise, _, score in included_rows)
+            sum(self._current_score(score) * template_exercise.points for _, template_exercise, _, score in included_rows)
             / included_weight_sum
         )
         final_score = max(0.0, min(100.0, final_score))
@@ -136,16 +137,16 @@ class FinishAssessmentAttemptUseCase:
         )
 
         speaking_scores = [
-            score.score
+            self._current_score(score)
             for score in included
             if score.exercise_type in (ExerciseType.READING_SPEAKING, ExerciseType.LISTENING_SPEAKING)
-            and score.score is not None
+            and self._current_score(score) is not None
         ]
         writing_scores = [
-            score.score
+            self._current_score(score)
             for score in included
             if score.exercise_type in (ExerciseType.READING_WRITING, ExerciseType.LISTENING_WRITING)
-            and score.score is not None
+            and self._current_score(score) is not None
         ]
         included_exercise_count = len(included_rows)
         total_exercise_count = len(rows)
@@ -170,11 +171,12 @@ class FinishAssessmentAttemptUseCase:
         attempt.completed_at = now
         self._attempt_repo.update(attempt)
 
+        rounded_final_score = round(final_score, 2)
         return self._result_repo.create(
             AssessmentResult(
                 id=UUID(int=0),
                 assessment_attempt_id=attempt.id,
-                final_score=round(final_score, 2),
+                final_score=rounded_final_score,
                 max_score=100.0,
                 mc_correct_count=sum(
                     score.scoring_components.get("is_correct") is True
@@ -211,6 +213,10 @@ class FinishAssessmentAttemptUseCase:
                 writing_review_required_count=writing_review_count,
                 score_denominator=included_weight_sum,
                 scoring_snapshot_json=snapshot,
+                original_final_score=rounded_final_score,
+                current_final_score=rounded_final_score,
+                original_scoring_snapshot_json=snapshot,
+                current_scoring_snapshot_json=snapshot,
             )
         )
 
@@ -227,7 +233,8 @@ class FinishAssessmentAttemptUseCase:
         total_exercise_count: int,
         coverage_weight_percentage: float,
     ) -> dict:
-        included = bool(score and score.score_eligible and score.score is not None)
+        current_score = FinishAssessmentAttemptUseCase._current_score(score)
+        included = bool(score and score.score_eligible and current_score is not None)
         exclusion_reason = None
         if not included:
             if score is None:
@@ -250,7 +257,9 @@ class FinishAssessmentAttemptUseCase:
             "order_index": template_exercise.order_index,
             "is_required": template_exercise.is_required,
             "points": template_exercise.points,
-            "score": score.score if score else None,
+            "score": current_score if score else None,
+            "original_score": score.original_score if score else None,
+            "current_score": current_score if score else None,
             "score_eligible": score.score_eligible if score else False,
             "included": included,
             "exclusion_reason": exclusion_reason,
@@ -261,8 +270,14 @@ class FinishAssessmentAttemptUseCase:
                 "required": score.manual_review_required if score else True,
                 "reasons": score.quality_reasons if score else ["MISSING_CANONICAL_SCORE"],
             },
-            "scoring_components": score.scoring_components if score else {},
-            "weighted_contribution": score.score * template_exercise.points if included and score else None,
+            "scoring_components": score.current_scoring_components or score.scoring_components if score else {},
+            "original_scoring_components": score.original_scoring_components if score else {},
+            "current_scoring_components": score.current_scoring_components or score.scoring_components if score else {},
+            "manual_adjustment_applied": score.manual_adjustment_applied if score else False,
+            "teacher_observation": score.teacher_observation if score else None,
+            "adjusted_by_teacher_id": str(score.adjusted_by_teacher_id) if score and score.adjusted_by_teacher_id else None,
+            "adjusted_at": score.adjusted_at.isoformat() if score and score.adjusted_at else None,
+            "weighted_contribution": current_score * template_exercise.points if included and score else None,
             "effective_weight": template_exercise.points if included else None,
             "effective_weight_percentage": effective_weight_percentage,
             "final_scoring_formula": "weighted_mean_by_template_exercise_points",
@@ -276,6 +291,12 @@ class FinishAssessmentAttemptUseCase:
             "score_denominator_deprecated": True,
             "intervention_level_status": "provisional",
         }
+
+    @staticmethod
+    def _current_score(score: ExerciseScore | None) -> float | None:
+        if score is None:
+            return None
+        return score.current_score if score.current_score is not None else score.score
 
     @staticmethod
     def _determine_intervention_level(

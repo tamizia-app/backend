@@ -18,6 +18,14 @@ class ExerciseScore:
     scoring_components: dict
     created_at: datetime
     updated_at: datetime
+    original_score: float | None = None
+    current_score: float | None = None
+    original_scoring_components: dict | None = None
+    current_scoring_components: dict | None = None
+    manual_adjustment_applied: bool = False
+    teacher_observation: str | None = None
+    adjusted_by_teacher_id: UUID | None = None
+    adjusted_at: datetime | None = None
 
 
 @dataclass
@@ -36,6 +44,18 @@ class SpeakingMetrics:
     comparison_json: dict | None = None
     review_json: dict | None = None
     quality_json: dict | None = None
+    original_pronunciation_score: float | None = None
+    current_pronunciation_score: float | None = None
+    original_accuracy_score: float | None = None
+    current_accuracy_score: float | None = None
+    original_fluency_score: float | None = None
+    current_fluency_score: float | None = None
+    original_completeness_score: float | None = None
+    current_completeness_score: float | None = None
+    original_lexical_match: float | None = None
+    current_lexical_match: float | None = None
+    original_prosody_score: float | None = None
+    current_prosody_score: float | None = None
 
 
 @dataclass
@@ -64,6 +84,12 @@ class WritingMetrics:
     writing_area_usage: float | None = None
     review_json: dict | None = None
     quality_json: dict | None = None
+    original_char_accuracy: float | None = None
+    current_char_accuracy: float | None = None
+    original_word_accuracy: float | None = None
+    current_word_accuracy: float | None = None
+    original_similarity_score: float | None = None
+    current_similarity_score: float | None = None
 
 
 @dataclass
@@ -89,3 +115,7 @@ class AssessmentResult:
     writing_review_required_count: int = 0
     score_denominator: int = 0
     scoring_snapshot_json: list[dict] | None = None
+    original_final_score: float | None = None
+    current_final_score: float | None = None
+    original_scoring_snapshot_json: list[dict] | None = None
+    current_scoring_snapshot_json: list[dict] | None = None

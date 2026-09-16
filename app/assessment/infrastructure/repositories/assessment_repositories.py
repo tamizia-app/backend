@@ -977,6 +977,18 @@ class SQLAlchemySpeakingMetricsRepository(SpeakingMetricsRepository):
             comparison_json=m.comparison_json,
             review_json=m.review_json,
             quality_json=m.quality_json,
+            original_pronunciation_score=m.original_pronunciation_score,
+            current_pronunciation_score=m.current_pronunciation_score,
+            original_accuracy_score=m.original_accuracy_score,
+            current_accuracy_score=m.current_accuracy_score,
+            original_fluency_score=m.original_fluency_score,
+            current_fluency_score=m.current_fluency_score,
+            original_completeness_score=m.original_completeness_score,
+            current_completeness_score=m.current_completeness_score,
+            original_lexical_match=m.original_lexical_match,
+            current_lexical_match=m.current_lexical_match,
+            original_prosody_score=m.original_prosody_score,
+            current_prosody_score=m.current_prosody_score,
         )
         self._db.add(model)
         self._db.flush()
@@ -1003,6 +1015,18 @@ class SQLAlchemySpeakingMetricsRepository(SpeakingMetricsRepository):
             comparison_json=model.comparison_json,
             review_json=model.review_json,
             quality_json=model.quality_json,
+            original_pronunciation_score=model.original_pronunciation_score,
+            current_pronunciation_score=model.current_pronunciation_score,
+            original_accuracy_score=model.original_accuracy_score,
+            current_accuracy_score=model.current_accuracy_score,
+            original_fluency_score=model.original_fluency_score,
+            current_fluency_score=model.current_fluency_score,
+            original_completeness_score=model.original_completeness_score,
+            current_completeness_score=model.current_completeness_score,
+            original_lexical_match=model.original_lexical_match,
+            current_lexical_match=model.current_lexical_match,
+            original_prosody_score=model.original_prosody_score,
+            current_prosody_score=model.current_prosody_score,
             created_at=model.created_at,
             updated_at=model.updated_at,
         )
@@ -1020,6 +1044,18 @@ class SQLAlchemySpeakingMetricsRepository(SpeakingMetricsRepository):
             model.comparison_json = m.comparison_json
             model.review_json = m.review_json
             model.quality_json = m.quality_json
+            model.original_pronunciation_score = m.original_pronunciation_score
+            model.current_pronunciation_score = m.current_pronunciation_score
+            model.original_accuracy_score = m.original_accuracy_score
+            model.current_accuracy_score = m.current_accuracy_score
+            model.original_fluency_score = m.original_fluency_score
+            model.current_fluency_score = m.current_fluency_score
+            model.original_completeness_score = m.original_completeness_score
+            model.current_completeness_score = m.current_completeness_score
+            model.original_lexical_match = m.original_lexical_match
+            model.current_lexical_match = m.current_lexical_match
+            model.original_prosody_score = m.original_prosody_score
+            model.current_prosody_score = m.current_prosody_score
             self._db.flush()
         return m
 
@@ -1051,6 +1087,12 @@ class SQLAlchemyWritingMetricsRepository(WritingMetricsRepository):
             writing_area_usage=m.writing_area_usage,
             review_json=m.review_json,
             quality_json=m.quality_json,
+            original_char_accuracy=m.original_char_accuracy,
+            current_char_accuracy=m.current_char_accuracy,
+            original_word_accuracy=m.original_word_accuracy,
+            current_word_accuracy=m.current_word_accuracy,
+            original_similarity_score=m.original_similarity_score,
+            current_similarity_score=m.current_similarity_score,
         )
         self._db.add(model)
         self._db.flush()
@@ -1087,6 +1129,12 @@ class SQLAlchemyWritingMetricsRepository(WritingMetricsRepository):
             writing_area_usage=model.writing_area_usage,
             review_json=model.review_json,
             quality_json=model.quality_json,
+            original_char_accuracy=model.original_char_accuracy,
+            current_char_accuracy=model.current_char_accuracy,
+            original_word_accuracy=model.original_word_accuracy,
+            current_word_accuracy=model.current_word_accuracy,
+            original_similarity_score=model.original_similarity_score,
+            current_similarity_score=model.current_similarity_score,
             created_at=model.created_at,
             updated_at=model.updated_at,
         )
@@ -1114,6 +1162,12 @@ class SQLAlchemyWritingMetricsRepository(WritingMetricsRepository):
             model.writing_area_usage = m.writing_area_usage
             model.review_json = m.review_json
             model.quality_json = m.quality_json
+            model.original_char_accuracy = m.original_char_accuracy
+            model.current_char_accuracy = m.current_char_accuracy
+            model.original_word_accuracy = m.original_word_accuracy
+            model.current_word_accuracy = m.current_word_accuracy
+            model.original_similarity_score = m.original_similarity_score
+            model.current_similarity_score = m.current_similarity_score
             self._db.flush()
         return m
 
@@ -1149,11 +1203,43 @@ class SQLAlchemyAssessmentResultRepository(AssessmentResultRepository):
             writing_review_required_count=r.writing_review_required_count,
             score_denominator=r.score_denominator,
             scoring_snapshot_json=r.scoring_snapshot_json,
+            original_final_score=r.original_final_score,
+            current_final_score=r.current_final_score,
+            original_scoring_snapshot_json=r.original_scoring_snapshot_json,
+            current_scoring_snapshot_json=r.current_scoring_snapshot_json,
             generated_at=r.generated_at,
         )
         self._db.add(model)
         self._db.flush()
         return self._to_domain(model)
+
+    def update(self, r: AssessmentResultDomain) -> AssessmentResultDomain:
+        model = self._db.get(AssessmentResultModel, r.id)
+        if model:
+            model.final_score = r.final_score
+            model.max_score = r.max_score
+            model.mc_correct_count = r.mc_correct_count
+            model.os_correct_count = r.os_correct_count
+            model.speaking_completed_count = r.speaking_completed_count
+            model.writing_completed_count = r.writing_completed_count
+            model.intervention_level = r.intervention_level.value if r.intervention_level else None
+            model.speaking_average_score = r.speaking_average_score
+            model.speaking_review_required_count = r.speaking_review_required_count
+            model.total_exercises = r.total_exercises
+            model.evaluated_exercises = r.evaluated_exercises
+            model.pending_exercises = r.pending_exercises
+            model.writing_average_score = r.writing_average_score
+            model.writing_review_required_count = r.writing_review_required_count
+            model.score_denominator = r.score_denominator
+            model.scoring_snapshot_json = r.scoring_snapshot_json
+            model.original_final_score = r.original_final_score
+            model.current_final_score = r.current_final_score
+            model.original_scoring_snapshot_json = r.original_scoring_snapshot_json
+            model.current_scoring_snapshot_json = r.current_scoring_snapshot_json
+            model.generated_at = r.generated_at
+            self._db.flush()
+            return self._to_domain(model)
+        return r
 
     @staticmethod
     def _to_domain(model: AssessmentResultModel) -> AssessmentResultDomain:
@@ -1179,6 +1265,10 @@ class SQLAlchemyAssessmentResultRepository(AssessmentResultRepository):
             writing_review_required_count=model.writing_review_required_count,
             score_denominator=model.score_denominator,
             scoring_snapshot_json=model.scoring_snapshot_json,
+            original_final_score=model.original_final_score,
+            current_final_score=model.current_final_score,
+            original_scoring_snapshot_json=model.original_scoring_snapshot_json,
+            current_scoring_snapshot_json=model.current_scoring_snapshot_json,
         )
 
 
@@ -1221,6 +1311,14 @@ class SQLAlchemyExerciseScoreRepository(ExerciseScoreRepository):
         model.manual_review_required = score.manual_review_required
         model.quality_reasons_json = score.quality_reasons
         model.scoring_components_json = score.scoring_components
+        model.original_score = score.original_score
+        model.current_score = score.current_score
+        model.original_scoring_components_json = score.original_scoring_components
+        model.current_scoring_components_json = score.current_scoring_components
+        model.manual_adjustment_applied = score.manual_adjustment_applied
+        model.teacher_observation = score.teacher_observation
+        model.adjusted_by_teacher_id = score.adjusted_by_teacher_id
+        model.adjusted_at = score.adjusted_at
         self._db.flush()
         return self._to_domain(model)
 
@@ -1238,4 +1336,12 @@ class SQLAlchemyExerciseScoreRepository(ExerciseScoreRepository):
             scoring_components=dict(model.scoring_components_json or {}),
             created_at=model.created_at,
             updated_at=model.updated_at,
+            original_score=model.original_score,
+            current_score=model.current_score,
+            original_scoring_components=dict(model.original_scoring_components_json or {}),
+            current_scoring_components=dict(model.current_scoring_components_json or {}),
+            manual_adjustment_applied=model.manual_adjustment_applied,
+            teacher_observation=model.teacher_observation,
+            adjusted_by_teacher_id=model.adjusted_by_teacher_id,
+            adjusted_at=model.adjusted_at,
         )

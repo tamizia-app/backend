@@ -172,3 +172,7 @@ class FinalResult:
     writing_review_required_count: int = 0
     score_denominator: int = 0
     scoring_snapshot: list[dict] | None = None
+    original_final_score: float | None = None
+    current_final_score: float | None = None
+    original_scoring_snapshot: list[dict] | None = None
+    current_scoring_snapshot: list[dict] | None = None

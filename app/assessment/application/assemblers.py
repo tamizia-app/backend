@@ -176,4 +176,8 @@ class FinalResultAssembler:
             writing_review_required_count=r.writing_review_required_count,
             score_denominator=r.score_denominator,
             scoring_snapshot=r.scoring_snapshot_json,
+            original_final_score=r.original_final_score,
+            current_final_score=r.current_final_score,
+            original_scoring_snapshot=r.original_scoring_snapshot_json,
+            current_scoring_snapshot=r.current_scoring_snapshot_json,
         )

@@ -1,6 +1,6 @@
 from datetime import UTC, datetime
 
-from sqlalchemy import Boolean, DateTime, Float, ForeignKey, Integer, String, Uuid, func
+from sqlalchemy import Boolean, DateTime, Float, ForeignKey, Integer, String, Text, Uuid, func
 from sqlalchemy.dialects.postgresql import JSON
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -29,6 +29,18 @@ class SpeakingMetricsModel(UUIDPrimaryKeyMixin, Base):
     comparison_json: Mapped[dict | None] = mapped_column(JSON, nullable=True)
     review_json: Mapped[dict | None] = mapped_column(JSON, nullable=True)
     quality_json: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+    original_pronunciation_score: Mapped[float | None] = mapped_column(Float, nullable=True)
+    current_pronunciation_score: Mapped[float | None] = mapped_column(Float, nullable=True)
+    original_accuracy_score: Mapped[float | None] = mapped_column(Float, nullable=True)
+    current_accuracy_score: Mapped[float | None] = mapped_column(Float, nullable=True)
+    original_fluency_score: Mapped[float | None] = mapped_column(Float, nullable=True)
+    current_fluency_score: Mapped[float | None] = mapped_column(Float, nullable=True)
+    original_completeness_score: Mapped[float | None] = mapped_column(Float, nullable=True)
+    current_completeness_score: Mapped[float | None] = mapped_column(Float, nullable=True)
+    original_lexical_match: Mapped[float | None] = mapped_column(Float, nullable=True)
+    current_lexical_match: Mapped[float | None] = mapped_column(Float, nullable=True)
+    original_prosody_score: Mapped[float | None] = mapped_column(Float, nullable=True)
+    current_prosody_score: Mapped[float | None] = mapped_column(Float, nullable=True)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=lambda: datetime.now(UTC), server_default=func.now()
     )
@@ -70,6 +82,12 @@ class WritingMetricsModel(UUIDPrimaryKeyMixin, Base):
     writing_area_usage: Mapped[float | None] = mapped_column(Float, nullable=True)
     review_json: Mapped[dict | None] = mapped_column(JSON, nullable=True)
     quality_json: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+    original_char_accuracy: Mapped[float | None] = mapped_column(Float, nullable=True)
+    current_char_accuracy: Mapped[float | None] = mapped_column(Float, nullable=True)
+    original_word_accuracy: Mapped[float | None] = mapped_column(Float, nullable=True)
+    current_word_accuracy: Mapped[float | None] = mapped_column(Float, nullable=True)
+    original_similarity_score: Mapped[float | None] = mapped_column(Float, nullable=True)
+    current_similarity_score: Mapped[float | None] = mapped_column(Float, nullable=True)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=lambda: datetime.now(UTC), server_default=func.now()
     )
@@ -107,6 +125,10 @@ class AssessmentResultModel(UUIDPrimaryKeyMixin, Base):
     writing_review_required_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     score_denominator: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     scoring_snapshot_json: Mapped[list | None] = mapped_column(JSON, nullable=True)
+    original_final_score: Mapped[float | None] = mapped_column(Float, nullable=True)
+    current_final_score: Mapped[float | None] = mapped_column(Float, nullable=True)
+    original_scoring_snapshot_json: Mapped[list | None] = mapped_column(JSON, nullable=True)
+    current_scoring_snapshot_json: Mapped[list | None] = mapped_column(JSON, nullable=True)
     generated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=lambda: datetime.now(UTC), server_default=func.now()
@@ -136,6 +158,16 @@ class ExerciseScoreModel(UUIDPrimaryKeyMixin, Base):
     manual_review_required: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
     quality_reasons_json: Mapped[list] = mapped_column(JSON, nullable=False, default=list)
     scoring_components_json: Mapped[dict] = mapped_column(JSON, nullable=False, default=dict)
+    original_score: Mapped[float | None] = mapped_column(Float, nullable=True)
+    current_score: Mapped[float | None] = mapped_column(Float, nullable=True)
+    original_scoring_components_json: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+    current_scoring_components_json: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+    manual_adjustment_applied: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    teacher_observation: Mapped[str | None] = mapped_column(Text, nullable=True)
+    adjusted_by_teacher_id: Mapped[uuid.UUID | None] = mapped_column(
+        Uuid, ForeignKey("teachers_iam.id", ondelete="SET NULL"), nullable=True
+    )
+    adjusted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=lambda: datetime.now(UTC), server_default=func.now()
     )

@@ -202,6 +202,8 @@ class UploadSpeakingResponseUseCase:
                     export[key] = raw_stt[key]
             transcription_export = export or raw_stt
 
+        comparison = pipeline_result.get("comparison") or {}
+        lexical_match = comparison.get("lexical_match_percentage")
         existing_metrics = self._speaking_metrics_repo.find_by_speaking_response_id(response.id)
         if existing_metrics:
             self._speaking_metrics_repo.update(
@@ -218,6 +220,42 @@ class UploadSpeakingResponseUseCase:
                     comparison_json=pipeline_result.get("comparison"),
                     review_json=pipeline_result.get("review"),
                     quality_json=None,
+                    original_pronunciation_score=(
+                        existing_metrics.original_pronunciation_score
+                        if existing_metrics.original_pronunciation_score is not None
+                        else pronunciation_score
+                    ),
+                    current_pronunciation_score=pronunciation_score,
+                    original_accuracy_score=(
+                        existing_metrics.original_accuracy_score
+                        if existing_metrics.original_accuracy_score is not None
+                        else accuracy_score
+                    ),
+                    current_accuracy_score=accuracy_score,
+                    original_fluency_score=(
+                        existing_metrics.original_fluency_score
+                        if existing_metrics.original_fluency_score is not None
+                        else fluency_score
+                    ),
+                    current_fluency_score=fluency_score,
+                    original_completeness_score=(
+                        existing_metrics.original_completeness_score
+                        if existing_metrics.original_completeness_score is not None
+                        else completeness_score
+                    ),
+                    current_completeness_score=completeness_score,
+                    original_lexical_match=(
+                        existing_metrics.original_lexical_match
+                        if existing_metrics.original_lexical_match is not None
+                        else lexical_match
+                    ),
+                    current_lexical_match=lexical_match,
+                    original_prosody_score=(
+                        existing_metrics.original_prosody_score
+                        if existing_metrics.original_prosody_score is not None
+                        else prosody_score
+                    ),
+                    current_prosody_score=prosody_score,
                     created_at=existing_metrics.created_at,
                     updated_at=now,
                 )
@@ -237,13 +275,23 @@ class UploadSpeakingResponseUseCase:
                     comparison_json=pipeline_result.get("comparison"),
                     review_json=pipeline_result.get("review"),
                     quality_json=None,
+                    original_pronunciation_score=pronunciation_score,
+                    current_pronunciation_score=pronunciation_score,
+                    original_accuracy_score=accuracy_score,
+                    current_accuracy_score=accuracy_score,
+                    original_fluency_score=fluency_score,
+                    current_fluency_score=fluency_score,
+                    original_completeness_score=completeness_score,
+                    current_completeness_score=completeness_score,
+                    original_lexical_match=lexical_match,
+                    current_lexical_match=lexical_match,
+                    original_prosody_score=prosody_score,
+                    current_prosody_score=prosody_score,
                     created_at=now,
                     updated_at=now,
                 )
             )
 
-        comparison = pipeline_result.get("comparison") or {}
-        lexical_match = comparison.get("lexical_match_percentage")
         exercise_score, scoring_components = calculate_reading_score(
             pronunciation_score=pronunciation_score,
             accuracy_score=accuracy_score,

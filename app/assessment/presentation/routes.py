@@ -48,6 +48,10 @@ from app.assessment.application.use_cases.list_invalid_template_points import (
     ListInvalidTemplatePointsQuery,
     ListInvalidTemplatePointsUseCase,
 )
+from app.assessment.application.use_cases.manual_review_exercise_attempt import (
+    ManualReviewExerciseAttemptCommand,
+    ManualReviewExerciseAttemptUseCase,
+)
 from app.assessment.application.use_cases.repeat_assessment_attempt import (
     RepeatAssessmentAttemptCommand,
     RepeatAssessmentAttemptUseCase,
@@ -150,6 +154,8 @@ from app.assessment.presentation.schemas import (
     ExerciseSummary,
     InvalidTemplatePointsResponse,
     MCExpectedReview,
+    ManualReviewRequest,
+    ManualReviewResponse,
     MCQuestionImageUploadResponse,
     MCResponseResponse,
     MCResponseReview,
@@ -293,6 +299,12 @@ def _snapshot_int(meta: dict, key: str, fallback: int) -> int:
     if isinstance(value, float):
         return int(value)
     return int(fallback or 0)
+
+
+def _current_score(canonical) -> float | None:
+    if not canonical:
+        return None
+    return canonical.current_score if canonical.current_score is not None else canonical.score
 
 
 def _template_response(template) -> TemplateResponse:
@@ -1318,16 +1330,16 @@ def get_speaking_response(
         free_transcription_text=speaking_resp.free_transcription_text,
         assessment_recognized_text=speaking_resp.assessment_recognized_text,
         recognized_text=speaking_resp.recognized_text,
-        pronunciation_score=metrics.pronunciation_score if metrics else None,
-        accuracy_score=metrics.accuracy_score if metrics else None,
-        fluency_score=metrics.fluency_score if metrics else None,
-        completeness_score=metrics.completeness_score if metrics else None,
+        pronunciation_score=(metrics.current_pronunciation_score if metrics and metrics.current_pronunciation_score is not None else metrics.pronunciation_score if metrics else None),
+        accuracy_score=(metrics.current_accuracy_score if metrics and metrics.current_accuracy_score is not None else metrics.accuracy_score if metrics else None),
+        fluency_score=(metrics.current_fluency_score if metrics and metrics.current_fluency_score is not None else metrics.fluency_score if metrics else None),
+        completeness_score=(metrics.current_completeness_score if metrics and metrics.current_completeness_score is not None else metrics.completeness_score if metrics else None),
         prosody_score=metrics.prosody_score if metrics else None,
         evaluation_status=evaluation_status,
         comparison=comparison,
         review=review,
         error_message=None,
-        exercise_score=canonical.score if canonical else None,
+        exercise_score=_current_score(canonical),
         technical_status=canonical.technical_status.value if canonical else "INVALID",
         score_eligible=canonical.score_eligible if canonical else False,
         manual_review_required=canonical.manual_review_required if canonical else True,
@@ -1435,11 +1447,11 @@ def upload_writing_response(
                 raw_ocr_result_json=metrics.raw_ocr_result_json,
                 cer=_cer,
                 wer=_wer,
-                similarity_score=_sim,
+                similarity_score=metrics.current_similarity_score if metrics.current_similarity_score is not None else _sim,
                 review_required=bool(_review.get("required")),
                 review_reasons=_reasons,
-                char_accuracy=_c_acc,
-                word_accuracy=_w_acc,
+                char_accuracy=metrics.current_char_accuracy if metrics.current_char_accuracy is not None else _c_acc,
+                word_accuracy=metrics.current_word_accuracy if metrics.current_word_accuracy is not None else _w_acc,
             )
     except Exception:
         pass
@@ -1521,11 +1533,11 @@ def get_writing_response(
             raw_ocr_result_json=metrics.raw_ocr_result_json,
             cer=_cer,
             wer=_wer,
-            similarity_score=_sim,
+            similarity_score=metrics.current_similarity_score if metrics.current_similarity_score is not None else _sim,
             review_required=bool(_review.get("required")),
             review_reasons=_reasons,
-            char_accuracy=_c_acc,
-            word_accuracy=_w_acc,
+            char_accuracy=metrics.current_char_accuracy if metrics.current_char_accuracy is not None else _c_acc,
+            word_accuracy=metrics.current_word_accuracy if metrics.current_word_accuracy is not None else _w_acc,
         )
 
     canonical = score_repo.find_by_exercise_attempt_id(exercise_attempt_id)
@@ -1544,12 +1556,64 @@ def get_writing_response(
         image_url=image_url,
         created_at=writing_resp.created_at,
         updated_at=writing_resp.updated_at,
-        exercise_score=canonical.score if canonical else None,
+        exercise_score=_current_score(canonical),
         technical_status=canonical.technical_status.value if canonical else "INVALID",
         score_eligible=canonical.score_eligible if canonical else False,
         manual_review_required=canonical.manual_review_required if canonical else True,
         quality_reasons=canonical.quality_reasons if canonical else ["MISSING_CANONICAL_SCORE"],
-        scoring_components=canonical.scoring_components if canonical else {},
+        scoring_components=canonical.current_scoring_components or canonical.scoring_components if canonical else {},
+    )
+
+
+@router.patch(
+    "/exercise-attempts/{exercise_attempt_id}/manual-review",
+    response_model=ManualReviewResponse,
+)
+def manual_review_exercise_attempt(
+    exercise_attempt_id: UUID,
+    request: ManualReviewRequest,
+    db: Session = Depends(get_db),
+    current_user: UserModel = Depends(get_current_user),
+) -> ManualReviewResponse:
+    teacher_id = _resolve_teacher_id(db, current_user.id)
+    uc = ManualReviewExerciseAttemptUseCase(
+        exercise_attempt_repo=SQLAlchemyExerciseAttemptRepository(db),
+        assessment_attempt_repo=SQLAlchemyAssessmentAttemptRepository(db),
+        assessment_repo=SQLAlchemyAssessmentRepository(db),
+        template_exercise_repo=SQLAlchemyTemplateExerciseRepository(db),
+        exercise_repo=SQLAlchemyExerciseRepository(db),
+        exercise_score_repo=SQLAlchemyExerciseScoreRepository(db),
+        speaking_response_repo=SQLAlchemySpeakingResponseRepository(db),
+        speaking_metrics_repo=SQLAlchemySpeakingMetricsRepository(db),
+        writing_response_repo=SQLAlchemyWritingResponseRepository(db),
+        writing_metrics_repo=SQLAlchemyWritingMetricsRepository(db),
+        result_repo=SQLAlchemyAssessmentResultRepository(db),
+    )
+    try:
+        result = uc.execute(
+            ManualReviewExerciseAttemptCommand(
+                exercise_attempt_id=exercise_attempt_id,
+                teacher_id=teacher_id,
+                metrics=request.metrics,
+                teacher_observation=request.teacher_observation,
+            )
+        )
+    except AssessmentException as e:
+        raise HTTPException(status_code=e.status_code, detail=e.detail)
+    db.commit()
+    return ManualReviewResponse(
+        exercise_attempt_id=result.exercise_attempt_id,
+        exercise_type=result.exercise_type.value,
+        original_score=result.original_score,
+        current_score=result.current_score,
+        original_metrics=result.original_metrics,
+        current_metrics=result.current_metrics,
+        score_eligible=result.score_eligible,
+        manual_adjustment_applied=result.manual_adjustment_applied,
+        teacher_observation=result.teacher_observation,
+        adjusted_by_teacher_id=result.adjusted_by_teacher_id,
+        adjusted_at=result.adjusted_at,
+        assessment_result=result.assessment_result,
     )
 
 
@@ -1570,6 +1634,7 @@ def _build_exercise_summaries(db: Session, attempt_id: UUID) -> list[ExerciseSum
             continue
 
         canonical = score_repo.find_by_exercise_attempt_id(ea.id)
+        current_score = _current_score(canonical)
 
         summaries.append(
             ExerciseSummary(
@@ -1579,12 +1644,16 @@ def _build_exercise_summaries(db: Session, attempt_id: UUID) -> list[ExerciseSum
                 type=exercise.type.value,
                 title=exercise.title,
                 status=ea.status.value,
-                score=round(canonical.score, 2) if canonical and canonical.score is not None else None,
+                score=round(current_score, 2) if current_score is not None else None,
+                original_score=canonical.original_score if canonical else None,
+                current_score=current_score,
                 review_required=canonical.manual_review_required if canonical else True,
                 technical_status=canonical.technical_status.value if canonical else "INVALID",
                 score_eligible=canonical.score_eligible if canonical else False,
                 quality_reasons=canonical.quality_reasons if canonical else ["MISSING_CANONICAL_SCORE"],
-                scoring_components=canonical.scoring_components if canonical else {},
+                scoring_components=canonical.current_scoring_components or canonical.scoring_components if canonical else {},
+                manual_adjustment_applied=canonical.manual_adjustment_applied if canonical else False,
+                teacher_observation=canonical.teacher_observation if canonical else None,
             )
         )
 
@@ -1626,6 +1695,8 @@ def finish_attempt(
     return AssessmentResultResponse(
         attempt_id=result.assessment_attempt_id,
         final_score=result.final_score,
+        original_final_score=result.original_final_score,
+        current_final_score=result.current_final_score,
         max_score=result.max_score,
         mc_correct_count=result.mc_correct_count,
         os_correct_count=result.os_correct_count,
@@ -1665,7 +1736,7 @@ def get_result(
 
     exercise_summaries = _build_exercise_summaries(db, attempt_id)
 
-    scoring_snapshot = result.scoring_snapshot or []
+    scoring_snapshot = result.current_scoring_snapshot or result.scoring_snapshot or []
     scoring_contract = _phase2_scoring_contract(
         scoring_snapshot,
         score_denominator=result.score_denominator,
@@ -1676,6 +1747,8 @@ def get_result(
     return AssessmentResultResponse(
         attempt_id=result.attempt_id,
         final_score=result.final_score,
+        original_final_score=result.original_final_score,
+        current_final_score=result.current_final_score,
         max_score=result.max_score,
         mc_correct_count=result.mc_correct_count,
         os_correct_count=result.os_correct_count,
@@ -1742,7 +1815,7 @@ def get_attempt_review(
     result = result_repo.find_by_attempt_id(attempt_id)
     result_response = None
     if result:
-        scoring_snapshot = result.scoring_snapshot_json or []
+        scoring_snapshot = result.current_scoring_snapshot_json or result.scoring_snapshot_json or []
         scoring_contract = _phase2_scoring_contract(
             scoring_snapshot,
             score_denominator=result.score_denominator,
@@ -1752,6 +1825,8 @@ def get_attempt_review(
         result_response = AssessmentResultResponse(
             attempt_id=attempt.id,
             final_score=result.final_score,
+            original_final_score=result.original_final_score,
+            current_final_score=result.current_final_score,
             max_score=result.max_score,
             mc_correct_count=result.mc_correct_count,
             os_correct_count=result.os_correct_count,
@@ -1880,13 +1955,27 @@ def get_attempt_review(
                 comparison = metrics.comparison_json or {}
                 review = metrics.review_json or {}
                 metrics_data = SpeakingMetricsReview(
-                    pronunciation_score=metrics.pronunciation_score,
-                    accuracy_score=metrics.accuracy_score,
-                    fluency_score=metrics.fluency_score,
-                    completeness_score=metrics.completeness_score,
+                    pronunciation_score=metrics.current_pronunciation_score if metrics.current_pronunciation_score is not None else metrics.pronunciation_score,
+                    accuracy_score=metrics.current_accuracy_score if metrics.current_accuracy_score is not None else metrics.accuracy_score,
+                    fluency_score=metrics.current_fluency_score if metrics.current_fluency_score is not None else metrics.fluency_score,
+                    completeness_score=metrics.current_completeness_score if metrics.current_completeness_score is not None else metrics.completeness_score,
                     prosody_score=metrics.prosody_score,
-                    lexical_match=comparison.get("lexical_match_percentage"),
+                    lexical_match=metrics.current_lexical_match if metrics.current_lexical_match is not None else comparison.get("lexical_match_percentage"),
                     wer_percentage=comparison.get("wer_percentage"),
+                    original_metrics={
+                        "accuracy_score": metrics.original_accuracy_score,
+                        "fluency_score": metrics.original_fluency_score,
+                        "pronunciation_score": metrics.original_pronunciation_score,
+                        "completeness_score": metrics.original_completeness_score,
+                        "lexical_match": metrics.original_lexical_match,
+                    },
+                    current_metrics={
+                        "accuracy_score": metrics.current_accuracy_score,
+                        "fluency_score": metrics.current_fluency_score,
+                        "pronunciation_score": metrics.current_pronunciation_score,
+                        "completeness_score": metrics.current_completeness_score,
+                        "lexical_match": metrics.current_lexical_match,
+                    },
                 )
                 review_required = review.get("required", False)
                 review_reasons = review.get("reasons", [])
@@ -1921,9 +2010,9 @@ def get_attempt_review(
                     confidence_avg=metrics.confidence_avg,
                     cer=metrics.cer,
                     wer=metrics.wer,
-                    similarity_score=metrics.similarity_score,
-                    char_accuracy=round(max(0.0, 100.0 * (1.0 - (metrics.cer or 0))), 2) if metrics.cer is not None else None,
-                    word_accuracy=round(max(0.0, 100.0 * (1.0 - (metrics.wer or 0))), 2) if metrics.wer is not None else None,
+                    similarity_score=metrics.current_similarity_score if metrics.current_similarity_score is not None else metrics.similarity_score,
+                    char_accuracy=metrics.current_char_accuracy if metrics.current_char_accuracy is not None else round(max(0.0, 100.0 * (1.0 - (metrics.cer or 0))), 2) if metrics.cer is not None else None,
+                    word_accuracy=metrics.current_word_accuracy if metrics.current_word_accuracy is not None else round(max(0.0, 100.0 * (1.0 - (metrics.wer or 0))), 2) if metrics.wer is not None else None,
                     duration_ms=metrics.duration_ms,
                     stroke_count=metrics.stroke_count,
                     point_count=metrics.point_count,
@@ -1933,10 +2022,20 @@ def get_attempt_review(
                     average_speed=metrics.average_speed,
                     speed_variability=metrics.speed_variability,
                     writing_area_usage=metrics.writing_area_usage,
+                    original_metrics={
+                        "char_accuracy": metrics.original_char_accuracy,
+                        "word_accuracy": metrics.original_word_accuracy,
+                        "similarity_score": metrics.original_similarity_score,
+                    },
+                    current_metrics={
+                        "char_accuracy": metrics.current_char_accuracy,
+                        "word_accuracy": metrics.current_word_accuracy,
+                        "similarity_score": metrics.current_similarity_score,
+                    },
                 )
 
         canonical = score_repo.find_by_exercise_attempt_id(ea.id)
-        score = canonical.score if canonical else None
+        score = _current_score(canonical)
         review_required = canonical.manual_review_required if canonical else True
         review_reasons = canonical.quality_reasons if canonical else ["MISSING_CANONICAL_SCORE"]
         exercise_reviews.append(
@@ -1949,6 +2048,8 @@ def get_attempt_review(
                 instructions=exercise.instructions,
                 status=ea.status.value,
                 score=round(score, 2) if score is not None else None,
+                original_score=canonical.original_score if canonical else None,
+                current_score=score,
                 question_text=question_text,
                 prompt_text=prompt_text,
                 reference_text=reference_text,
@@ -1960,7 +2061,11 @@ def get_attempt_review(
                 technical_status=canonical.technical_status.value if canonical else "INVALID",
                 score_eligible=canonical.score_eligible if canonical else False,
                 quality_reasons=canonical.quality_reasons if canonical else ["MISSING_CANONICAL_SCORE"],
-                scoring_components=canonical.scoring_components if canonical else {},
+                scoring_components=canonical.current_scoring_components or canonical.scoring_components if canonical else {},
+                manual_adjustment_applied=canonical.manual_adjustment_applied if canonical else False,
+                teacher_observation=canonical.teacher_observation if canonical else None,
+                adjusted_by_teacher_id=canonical.adjusted_by_teacher_id if canonical else None,
+                adjusted_at=canonical.adjusted_at if canonical else None,
             )
         )
 

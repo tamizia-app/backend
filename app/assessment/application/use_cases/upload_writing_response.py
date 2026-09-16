@@ -168,6 +168,7 @@ class UploadWritingResponseUseCase:
             recognized=recognized_text or "",
             confidence_avg=ocr_result.confidence_avg if ocr_result else None,
         )
+        candidate_score = review.similarity_score if expected_text and recognized_text else None
         if expected_text and recognized_text:
             ocr_metrics["cer"] = review.cer
             ocr_metrics["wer"] = review.wer
@@ -189,6 +190,28 @@ class UploadWritingResponseUseCase:
                             "reasons": review.review_reasons,
                         },
                         quality_json=None,
+                        original_char_accuracy=(
+                            existing_metrics.original_char_accuracy
+                            if existing_metrics.original_char_accuracy is not None
+                            else review.char_accuracy
+                            if expected_text and recognized_text
+                            else None
+                        ),
+                        current_char_accuracy=review.char_accuracy if expected_text and recognized_text else None,
+                        original_word_accuracy=(
+                            existing_metrics.original_word_accuracy
+                            if existing_metrics.original_word_accuracy is not None
+                            else review.word_accuracy
+                            if expected_text and recognized_text
+                            else None
+                        ),
+                        current_word_accuracy=review.word_accuracy if expected_text and recognized_text else None,
+                        original_similarity_score=(
+                            existing_metrics.original_similarity_score
+                            if existing_metrics.original_similarity_score is not None
+                            else candidate_score
+                        ),
+                        current_similarity_score=candidate_score,
                         **metrics_data,
                     )
                 )
@@ -204,11 +227,16 @@ class UploadWritingResponseUseCase:
                             "reasons": review.review_reasons,
                         },
                         quality_json=None,
+                        original_char_accuracy=review.char_accuracy if expected_text and recognized_text else None,
+                        current_char_accuracy=review.char_accuracy if expected_text and recognized_text else None,
+                        original_word_accuracy=review.word_accuracy if expected_text and recognized_text else None,
+                        current_word_accuracy=review.word_accuracy if expected_text and recognized_text else None,
+                        original_similarity_score=candidate_score,
+                        current_similarity_score=candidate_score,
                         **metrics_data,
                     )
                 )
 
-        candidate_score = review.similarity_score if expected_text and recognized_text else None
         quality_reasons = list(review.review_reasons)
         successful_ocr = bool(ocr_result and ocr_result.full_text)
         if image_error and not successful_ocr:
