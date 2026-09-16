@@ -148,7 +148,7 @@ class ManualReviewExerciseAttemptUseCase:
                 score=current_score,
                 score_eligible=score_eligible,
                 technical_status=existing_score.technical_status,
-                manual_review_required=True,
+                manual_review_required=False,
                 quality_reasons=quality_reasons,
                 scoring_components=updated_components,
                 created_at=existing_score.created_at,
