@@ -4,7 +4,7 @@ from uuid import UUID
 
 from app.assessment.application.assemblers import WritingResponseAssembler
 from app.assessment.application.exceptions import (
-    AttemptAlreadyCompletedError,
+    AssessmentEvidenceLockedError,
     ExerciseAttemptNotFoundError,
     InvalidExerciseTypeError,
 )
@@ -84,7 +84,14 @@ class UploadWritingResponseUseCase:
 
         attempt = self._assessment_attempt_repo.find_by_id(ea.assessment_attempt_id)
         if attempt.status == AttemptStatus.COMPLETED:
-            raise AttemptAlreadyCompletedError("Completed attempts are immutable. Create a repeat attempt.")
+            raise AssessmentEvidenceLockedError()
+        existing_score = self._exercise_score_repo.find_by_exercise_attempt_id(ea.id) if self._exercise_score_repo else None
+        if existing_score and (
+            existing_score.review_version > 0
+            or existing_score.manual_adjustment_applied
+            or existing_score.review_status in {"confirmed", "overridden", "reverted"}
+        ):
+            raise AssessmentEvidenceLockedError()
         assessment = self._assessment_repo.find_by_id(attempt.assessment_id)
 
         image_valid, image_error = validate_image_content(

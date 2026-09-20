@@ -883,6 +883,7 @@ def test_upload_speaking_response(client, teacher_headers, classroom_id, student
         files={"file": ("replacement.wav", b"replacement audio", "audio/wav")},
     )
     assert immutable_audio.status_code == 409
+    assert immutable_audio.json()["detail"]["code"] == "ASSESSMENT_EVIDENCE_LOCKED"
 
 
 def _create_speaking_setup(client, teacher_headers, classroom_id, student_id, exercise_type="READING_SPEAKING", expected_text="Hola mundo"):
@@ -1323,6 +1324,119 @@ def test_upload_speaking_response_update_existing(client, teacher_headers, class
         records = db.query(SpeakingResponseModel).all()
         assert len(records) == 1
         assert records[0].free_transcription_text == "version 2"
+
+
+def test_upload_speaking_after_manual_review_is_locked_and_keeps_existing_response(
+    client, teacher_headers, classroom_id, student_id, monkeypatch
+):
+    from app.assessment.application.use_cases.assess_reading_pipeline import AssessReadingPipelineUseCase
+
+    async def mock_execute(self, command):
+        return {
+            "status": "completed",
+            "recognized_text": "hola mundo",
+            "stt_recognized_text": "hola mundo",
+            "assessment_recognized_text": "hola mundo",
+            "pronunciation_score": 85.0,
+            "accuracy_score": 80.0,
+            "fluency_score": 90.0,
+            "completeness_score": 95.0,
+            "prosody_score": None,
+            "comparison": {"lexical_match_percentage": 100.0},
+            "review": {"required": False, "reasons": []},
+            "error_message": None,
+            "duration_ms": 1500,
+            "raw_result_json": {},
+            "stt": {"text": "hola mundo", "segments": [], "language": "es", "duration_ms": 1500},
+        }
+
+    monkeypatch.setattr(AssessReadingPipelineUseCase, "execute", mock_execute)
+    ea_id = _create_speaking_setup(client, teacher_headers, classroom_id, student_id)
+
+    first = client.post(
+        f"/api/v1/assessments/exercise-attempts/{ea_id}/speaking-response",
+        headers=teacher_headers,
+        files={"file": ("test.wav", b"fake audio content", "audio/wav")},
+    )
+    assert first.status_code == 200
+
+    review = client.patch(
+        f"/api/v1/assessments/exercise-attempts/{ea_id}/manual-review",
+        headers=teacher_headers,
+        json={"action": "confirm", "teacher_observation": "Validado por docente."},
+    )
+    assert review.status_code == 200
+    assert review.json()["review_version"] == 1
+
+    locked = client.post(
+        f"/api/v1/assessments/exercise-attempts/{ea_id}/speaking-response",
+        headers=teacher_headers,
+        files={"file": ("replacement.wav", b"replacement audio", "audio/wav")},
+    )
+    assert locked.status_code == 409
+    assert locked.json()["detail"]["code"] == "ASSESSMENT_EVIDENCE_LOCKED"
+
+    saved = client.get(
+        f"/api/v1/assessments/exercise-attempts/{ea_id}/speaking-response",
+        headers=teacher_headers,
+    ).json()
+    assert saved["original_filename"] == "test.wav"
+    assert saved["free_transcription_text"] == "hola mundo"
+
+
+def test_teacher_isolation_for_speaking_evidence_and_manual_review(
+    client, teacher_headers, other_teacher_headers, classroom_id, student_id, monkeypatch
+):
+    from app.assessment.application.use_cases.assess_reading_pipeline import AssessReadingPipelineUseCase
+
+    async def mock_execute(self, command):
+        return {
+            "status": "completed",
+            "recognized_text": "hola mundo",
+            "stt_recognized_text": "hola mundo",
+            "assessment_recognized_text": "hola mundo",
+            "pronunciation_score": 85.0,
+            "accuracy_score": 80.0,
+            "fluency_score": 90.0,
+            "completeness_score": 95.0,
+            "prosody_score": None,
+            "comparison": {"lexical_match_percentage": 100.0},
+            "review": {"required": False, "reasons": []},
+            "error_message": None,
+            "duration_ms": 1500,
+            "raw_result_json": {},
+            "stt": {"text": "hola mundo", "segments": [], "language": "es", "duration_ms": 1500},
+        }
+
+    monkeypatch.setattr(AssessReadingPipelineUseCase, "execute", mock_execute)
+    ea_id = _create_speaking_setup(client, teacher_headers, classroom_id, student_id)
+
+    foreign_post = client.post(
+        f"/api/v1/assessments/exercise-attempts/{ea_id}/speaking-response",
+        headers=other_teacher_headers,
+        files={"file": ("foreign.wav", b"foreign audio", "audio/wav")},
+    )
+    assert foreign_post.status_code == 404
+
+    owner_post = client.post(
+        f"/api/v1/assessments/exercise-attempts/{ea_id}/speaking-response",
+        headers=teacher_headers,
+        files={"file": ("test.wav", b"fake audio content", "audio/wav")},
+    )
+    assert owner_post.status_code == 200
+
+    foreign_get = client.get(
+        f"/api/v1/assessments/exercise-attempts/{ea_id}/speaking-response",
+        headers=other_teacher_headers,
+    )
+    assert foreign_get.status_code == 404
+
+    foreign_review = client.patch(
+        f"/api/v1/assessments/exercise-attempts/{ea_id}/manual-review",
+        headers=other_teacher_headers,
+        json={"action": "confirm", "teacher_observation": "Intento ajeno."},
+    )
+    assert foreign_review.status_code == 404
 
 
 def test_finish_attempt_and_get_result(client, teacher_headers, classroom_id, student_id):
@@ -3855,8 +3969,89 @@ def test_finish_writing_only_with_similarity_scores_result(client, teacher_heade
             data={"payload_json": SAMPLE_PAYLOAD_JSON},
         )
         assert immutable_image.status_code == 409
+        assert immutable_image.json()["detail"]["code"] == "ASSESSMENT_EVIDENCE_LOCKED"
     finally:
         get_settings.cache_clear()
+
+
+def test_upload_writing_after_manual_review_is_locked_and_keeps_existing_response(
+    client, teacher_headers, classroom_id, student_id, monkeypatch
+):
+    from app.assessment.application.ports.ocr_service import OcrResult
+    from app.assessment.infrastructure.adapters.azure_vision_ocr import AzureVisionOcrAdapter
+    from app.core.config import get_settings
+
+    def mock_extract_text(self, image_data):
+        return OcrResult(full_text="El gato duerme.", confidence_avg=0.95, raw_response={"blocks": []})
+
+    monkeypatch.setattr(AzureVisionOcrAdapter, "extract_text", mock_extract_text)
+    monkeypatch.setenv("AZURE_VISION_ENDPOINT", "https://fake.endpoint")
+    monkeypatch.setenv("AZURE_VISION_KEY", "fake-key")
+    get_settings.cache_clear()
+
+    try:
+        _, ea_id = _create_writing_setup(client, teacher_headers, classroom_id, student_id)
+        first = client.post(
+            f"/api/v1/assessments/exercise-attempts/{ea_id}/writing-response",
+            headers=teacher_headers,
+            files={"file": ("writing.png", VALID_PNG_BYTES, "image/png")},
+            data={"payload_json": SAMPLE_PAYLOAD_JSON},
+        )
+        assert first.status_code == 200
+
+        review = client.patch(
+            f"/api/v1/assessments/exercise-attempts/{ea_id}/manual-review",
+            headers=teacher_headers,
+            json={"action": "confirm", "teacher_observation": "Validado por docente."},
+        )
+        assert review.status_code == 200
+        assert review.json()["review_version"] == 1
+
+        locked = client.post(
+            f"/api/v1/assessments/exercise-attempts/{ea_id}/writing-response",
+            headers=teacher_headers,
+            files={"file": ("replacement.png", VALID_PNG_BYTES, "image/png")},
+            data={"payload_json": SAMPLE_PAYLOAD_JSON},
+        )
+        assert locked.status_code == 409
+        assert locked.json()["detail"]["code"] == "ASSESSMENT_EVIDENCE_LOCKED"
+
+        saved = client.get(
+            f"/api/v1/assessments/exercise-attempts/{ea_id}/writing-response",
+            headers=teacher_headers,
+        ).json()
+        assert saved["original_filename"] == "writing.png"
+        assert saved["recognized_text"] == "El gato duerme."
+    finally:
+        get_settings.cache_clear()
+
+
+def test_teacher_isolation_for_writing_evidence(
+    client, teacher_headers, other_teacher_headers, classroom_id, student_id
+):
+    _, ea_id = _create_writing_setup(client, teacher_headers, classroom_id, student_id)
+
+    foreign_post = client.post(
+        f"/api/v1/assessments/exercise-attempts/{ea_id}/writing-response",
+        headers=other_teacher_headers,
+        files={"file": ("foreign.png", VALID_PNG_BYTES, "image/png")},
+        data={"payload_json": SAMPLE_PAYLOAD_JSON},
+    )
+    assert foreign_post.status_code == 404
+
+    owner_post = client.post(
+        f"/api/v1/assessments/exercise-attempts/{ea_id}/writing-response",
+        headers=teacher_headers,
+        files={"file": ("writing.png", VALID_PNG_BYTES, "image/png")},
+        data={"payload_json": SAMPLE_PAYLOAD_JSON},
+    )
+    assert owner_post.status_code == 200
+
+    foreign_get = client.get(
+        f"/api/v1/assessments/exercise-attempts/{ea_id}/writing-response",
+        headers=other_teacher_headers,
+    )
+    assert foreign_get.status_code == 404
 
 
 def test_finish_writing_only_without_similarity_is_not_evaluable(client, teacher_headers, classroom_id, student_id):
@@ -4621,7 +4816,9 @@ def test_get_attempt_review_not_finished_returns_review(client, teacher_headers,
     assert len(data["exercise_reviews"]) == 1
 
 
-def test_get_attempt_review_teacher_isolation(client, teacher_headers, other_teacher_headers, student_id):
+def test_get_attempt_review_teacher_isolation(
+    client, teacher_headers, other_teacher_headers, classroom_id, student_id
+):
     tmpl = client.post("/api/v1/assessments/templates", headers=teacher_headers, json={"name": "RevISO", "version": 1}).json()
     ex = client.post("/api/v1/assessments/exercises", headers=teacher_headers, json={
         "type": "MULTIPLE_CHOICE", "title": "MC",
@@ -4630,10 +4827,10 @@ def test_get_attempt_review_teacher_isolation(client, teacher_headers, other_tea
     client.post(f"/api/v1/assessments/templates/{tmpl['template_id']}/exercises", headers=teacher_headers,
                 json={"exercise_id": ex["exercise_id"], "order_index": 1, "points": 2, "is_required": True})
     asm = client.post("/api/v1/assessments", headers=teacher_headers,
-                      json={"template_id": tmpl["template_id"], "classroom_id": str(student_id)}).json()
-    # The other teacher should not see this teacher's attempt
-    fake_attempt_id = uuid.uuid4()
-    resp = client.get(f"/api/v1/assessments/attempts/{fake_attempt_id}/review", headers=other_teacher_headers)
+                      json={"template_id": tmpl["template_id"], "classroom_id": str(classroom_id)}).json()
+    att = client.post(f"/api/v1/assessments/{asm['assessment_id']}/attempts", headers=teacher_headers,
+                      json={"student_id": str(student_id)}).json()
+    resp = client.get(f"/api/v1/assessments/attempts/{att['attempt_id']}/review", headers=other_teacher_headers)
     assert resp.status_code == 404
 
 

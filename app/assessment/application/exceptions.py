@@ -88,6 +88,15 @@ class AttemptAlreadyCompletedError(AssessmentException):
         self.detail = detail
 
 
+class AssessmentEvidenceLockedError(AssessmentException):
+    def __init__(self) -> None:
+        self.status_code = 409
+        self.detail = {
+            "code": "ASSESSMENT_EVIDENCE_LOCKED",
+            "message": "La evidencia no puede reemplazarse porque la evaluación ya fue completada o revisada.",
+        }
+
+
 class AttemptNotEvaluableError(AssessmentException):
     def __init__(self, detail: str | dict = "Attempt has required exercises without an eligible score.") -> None:
         self.status_code = 409

@@ -227,6 +227,24 @@ def _get_student_if_owned_by_teacher(db: Session, student_id: UUID, teacher_id: 
     return student
 
 
+def _assert_exercise_attempt_owned_by_teacher(
+    db: Session, exercise_attempt_id: UUID, teacher_id: UUID
+) -> None:
+    ea_repo = SQLAlchemyExerciseAttemptRepository(db)
+    attempt_repo = SQLAlchemyAssessmentAttemptRepository(db)
+    assessment_repo = SQLAlchemyAssessmentRepository(db)
+
+    exercise_attempt = ea_repo.find_by_id(exercise_attempt_id)
+    if not exercise_attempt:
+        raise HTTPException(status_code=404, detail="Exercise attempt not found")
+    attempt = attempt_repo.find_by_id(exercise_attempt.assessment_attempt_id)
+    if not attempt:
+        raise HTTPException(status_code=404, detail="Exercise attempt not found")
+    assessment = assessment_repo.find_by_id(attempt.assessment_id)
+    if not assessment or assessment.homeroom_teacher_id != teacher_id:
+        raise HTTPException(status_code=404, detail="Exercise attempt not found")
+
+
 MAX_AUDIO_SIZE = 20 * 1024 * 1024
 MAX_IMAGE_SIZE = 10 * 1024 * 1024
 ALLOWED_AUDIO_TYPES = {"audio/wav", "audio/mpeg", "audio/mp3", "audio/mp4", "audio/x-m4a", "audio/webm", "audio/ogg"}
@@ -1455,7 +1473,8 @@ async def upload_speaking_response(
     db: Session = Depends(get_db),
     current_user: UserModel = Depends(get_current_user),
 ) -> SpeakingResponseResponse:
-    _resolve_teacher_id(db, current_user.id)
+    teacher_id = _resolve_teacher_id(db, current_user.id)
+    _assert_exercise_attempt_owned_by_teacher(db, exercise_attempt_id, teacher_id)
 
     if file.content_type and file.content_type not in ALLOWED_AUDIO_TYPES:
         raise HTTPException(status_code=400, detail="Invalid audio format. Allowed: wav, mp3, m4a, webm, ogg")
@@ -1536,7 +1555,8 @@ def get_speaking_response(
     db: Session = Depends(get_db),
     current_user: UserModel = Depends(get_current_user),
 ) -> SpeakingResponseResponse:
-    _resolve_teacher_id(db, current_user.id)
+    teacher_id = _resolve_teacher_id(db, current_user.id)
+    _assert_exercise_attempt_owned_by_teacher(db, exercise_attempt_id, teacher_id)
     speaking_repo = SQLAlchemySpeakingResponseRepository(db)
     metrics_repo = SQLAlchemySpeakingMetricsRepository(db)
     score_repo = SQLAlchemyExerciseScoreRepository(db)
@@ -1596,7 +1616,8 @@ def upload_writing_response(
     db: Session = Depends(get_db),
     current_user: UserModel = Depends(get_current_user),
 ) -> WritingResponseResponse:
-    _resolve_teacher_id(db, current_user.id)
+    teacher_id = _resolve_teacher_id(db, current_user.id)
+    _assert_exercise_attempt_owned_by_teacher(db, exercise_attempt_id, teacher_id)
 
     if file.content_type and file.content_type not in ALLOWED_IMAGE_TYPES:
         raise HTTPException(
@@ -1726,7 +1747,8 @@ def get_writing_response(
     db: Session = Depends(get_db),
     current_user: UserModel = Depends(get_current_user),
 ) -> WritingResponseResponse:
-    _resolve_teacher_id(db, current_user.id)
+    teacher_id = _resolve_teacher_id(db, current_user.id)
+    _assert_exercise_attempt_owned_by_teacher(db, exercise_attempt_id, teacher_id)
     writing_repo = SQLAlchemyWritingResponseRepository(db)
     metrics_repo = SQLAlchemyWritingMetricsRepository(db)
     score_repo = SQLAlchemyExerciseScoreRepository(db)
