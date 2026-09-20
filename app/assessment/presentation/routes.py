@@ -405,6 +405,18 @@ def _original_scoring_components(canonical) -> dict:
     return {}
 
 
+def _review_status(canonical) -> str:
+    if not canonical:
+        return "pending"
+    if canonical.review_status:
+        return canonical.review_status
+    if canonical.manual_adjustment_applied:
+        return "overridden"
+    if canonical.manual_review_required:
+        return "pending"
+    return "not_required"
+
+
 def _template_response(template) -> TemplateResponse:
     return TemplateResponse(
         template_id=template.template_id,
@@ -1809,6 +1821,7 @@ def manual_review_exercise_attempt(
                 exercise_attempt_id=exercise_attempt_id,
                 teacher_id=teacher_id,
                 metrics=request.metrics,
+                action=request.action,
                 teacher_observation=request.teacher_observation,
             )
         )
@@ -1824,6 +1837,7 @@ def manual_review_exercise_attempt(
         current_metrics=result.current_metrics,
         score_eligible=result.score_eligible,
         manual_adjustment_applied=result.manual_adjustment_applied,
+        review_status=result.review_status,
         teacher_observation=result.teacher_observation,
         adjusted_by_teacher_id=result.adjusted_by_teacher_id,
         adjusted_at=result.adjusted_at,
@@ -1869,6 +1883,7 @@ def _build_exercise_summaries(db: Session, attempt_id: UUID) -> list[ExerciseSum
                 original_scoring_components=_original_scoring_components(canonical),
                 current_scoring_components=_current_scoring_components(canonical),
                 manual_adjustment_applied=canonical.manual_adjustment_applied if canonical else False,
+                review_status=_review_status(canonical),
                 teacher_observation=canonical.teacher_observation if canonical else None,
             )
         )
@@ -2285,6 +2300,7 @@ def get_attempt_review(
                 original_scoring_components=_original_scoring_components(canonical),
                 current_scoring_components=_current_scoring_components(canonical),
                 manual_adjustment_applied=canonical.manual_adjustment_applied if canonical else False,
+                review_status=_review_status(canonical),
                 teacher_observation=canonical.teacher_observation if canonical else None,
                 adjusted_by_teacher_id=canonical.adjusted_by_teacher_id if canonical else None,
                 adjusted_at=canonical.adjusted_at if canonical else None,

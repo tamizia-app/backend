@@ -37,13 +37,17 @@ SPEAKING_REVIEW_METRICS = {
     "lexical_match",
 }
 WRITING_REVIEW_METRICS = {"char_accuracy", "word_accuracy"}
+MANUAL_REVIEW_ACTION_CONFIRM = "confirm"
+MANUAL_REVIEW_ACTION_OVERRIDE_METRICS = "override_metrics"
+MANUAL_REVIEW_ACTIONS = {MANUAL_REVIEW_ACTION_CONFIRM, MANUAL_REVIEW_ACTION_OVERRIDE_METRICS}
 
 
 @dataclass
 class ManualReviewExerciseAttemptCommand:
     exercise_attempt_id: UUID
     teacher_id: UUID
-    metrics: dict[str, float]
+    metrics: dict[str, float] | None = None
+    action: str = MANUAL_REVIEW_ACTION_OVERRIDE_METRICS
     teacher_observation: str | None = None
 
 
@@ -57,6 +61,7 @@ class ManualReviewExerciseAttemptResult:
     current_metrics: dict[str, float | None]
     score_eligible: bool
     manual_adjustment_applied: bool
+    review_status: str
     teacher_observation: str | None
     adjusted_by_teacher_id: UUID | None
     adjusted_at: datetime | None
@@ -92,7 +97,11 @@ class ManualReviewExerciseAttemptUseCase:
         self._result_repo = result_repo
 
     def execute(self, command: ManualReviewExerciseAttemptCommand) -> ManualReviewExerciseAttemptResult:
-        self._validate_metric_values(command.metrics)
+        action = command.action or MANUAL_REVIEW_ACTION_OVERRIDE_METRICS
+        self._validate_action(action)
+        teacher_observation = self._validate_teacher_observation(command.teacher_observation)
+        if action == MANUAL_REVIEW_ACTION_OVERRIDE_METRICS:
+            self._validate_metric_values(command.metrics)
         exercise_attempt = self._exercise_attempt_repo.find_by_id(command.exercise_attempt_id)
         if not exercise_attempt:
             raise ExerciseAttemptNotFoundError()
@@ -108,25 +117,35 @@ class ManualReviewExerciseAttemptUseCase:
 
         template_exercise = self._template_exercise_repo.find_by_id(exercise_attempt.template_exercise_id)
         exercise = self._exercise_repo.find_by_id(template_exercise.exercise_id)
-        if exercise.type == ExerciseType.READING_SPEAKING:
-            original_metrics, current_metrics, current_score, current_components = self._review_speaking(
-                exercise_attempt.id, command.metrics
-            )
-        elif exercise.type == ExerciseType.READING_WRITING:
-            original_metrics, current_metrics, current_score, current_components = self._review_writing(
-                exercise_attempt.id, command.metrics
-            )
-        else:
-            raise InvalidExerciseTypeError(
-                "Manual metric review is only allowed for READING_SPEAKING and READING_WRITING exercises."
-            )
-
         existing_score = self._exercise_score_repo.find_by_exercise_attempt_id(exercise_attempt.id)
         if not existing_score:
             raise InvalidExerciseTypeError("Exercise does not have a score to review.")
         if existing_score.technical_status == TechnicalStatus.INVALID:
             raise InvalidExerciseTypeError(
                 "Manual review is not allowed for INVALID exercises. New evidence is required."
+            )
+
+        if action == MANUAL_REVIEW_ACTION_CONFIRM:
+            original_metrics, current_metrics, current_score, current_components = self._confirm_review(
+                exercise.type, exercise_attempt.id, existing_score
+            )
+            manual_adjustment_applied = False
+            review_status = "confirmed"
+        elif exercise.type == ExerciseType.READING_SPEAKING:
+            original_metrics, current_metrics, current_score, current_components = self._review_speaking(
+                exercise_attempt.id, command.metrics or {}
+            )
+            manual_adjustment_applied = True
+            review_status = "overridden"
+        elif exercise.type == ExerciseType.READING_WRITING:
+            original_metrics, current_metrics, current_score, current_components = self._review_writing(
+                exercise_attempt.id, command.metrics or {}
+            )
+            manual_adjustment_applied = True
+            review_status = "overridden"
+        else:
+            raise InvalidExerciseTypeError(
+                "Manual metric review is only allowed for READING_SPEAKING and READING_WRITING exercises."
             )
 
         now = datetime.now(timezone.utc)
@@ -137,7 +156,8 @@ class ManualReviewExerciseAttemptUseCase:
         original_components = self._original_scoring_components(existing_score)
         updated_components = {
             **self._clean_scoring_components(current_components),
-            "manual_adjustment_applied": True,
+            "manual_adjustment_applied": manual_adjustment_applied,
+            "review_status": review_status,
             "manual_review_overrode_partial": existing_score.technical_status == TechnicalStatus.PARTIAL,
         }
         updated_score = self._exercise_score_repo.upsert(
@@ -161,8 +181,9 @@ class ManualReviewExerciseAttemptUseCase:
                 current_score=current_score,
                 original_scoring_components=original_components,
                 current_scoring_components=updated_components,
-                manual_adjustment_applied=True,
-                teacher_observation=command.teacher_observation,
+                manual_adjustment_applied=manual_adjustment_applied,
+                review_status=review_status,
+                teacher_observation=teacher_observation,
                 adjusted_by_teacher_id=command.teacher_id,
                 adjusted_at=now,
             )
@@ -178,11 +199,34 @@ class ManualReviewExerciseAttemptUseCase:
             current_metrics=current_metrics,
             score_eligible=updated_score.score_eligible,
             manual_adjustment_applied=updated_score.manual_adjustment_applied,
+            review_status=self._review_status(updated_score),
             teacher_observation=updated_score.teacher_observation,
             adjusted_by_teacher_id=updated_score.adjusted_by_teacher_id,
             adjusted_at=updated_score.adjusted_at,
             assessment_result=assessment_result,
         )
+
+    def _confirm_review(
+        self,
+        exercise_type: ExerciseType,
+        exercise_attempt_id: UUID,
+        existing_score: ExerciseScore,
+    ) -> tuple[dict[str, float | None], dict[str, float | None], float, dict]:
+        if exercise_type == ExerciseType.READING_SPEAKING:
+            original, current = self._speaking_metric_snapshots(exercise_attempt_id)
+        elif exercise_type == ExerciseType.READING_WRITING:
+            original, current = self._writing_metric_snapshots(exercise_attempt_id)
+        else:
+            raise InvalidExerciseTypeError(
+                "Manual metric review is only allowed for READING_SPEAKING and READING_WRITING exercises."
+            )
+        current_score = self._current_score(existing_score)
+        if current_score is None:
+            raise InvalidExerciseTypeError("Exercise does not have a current score to confirm.")
+        components = self._clean_scoring_components(
+            existing_score.current_scoring_components or existing_score.scoring_components
+        )
+        return original, current, current_score, components
 
     def _review_speaking(
         self, exercise_attempt_id: UUID, updates: dict[str, float]
@@ -237,6 +281,31 @@ class ManualReviewExerciseAttemptUseCase:
         self._speaking_metrics_repo.update(metrics)
         return original, current, score, components
 
+    def _speaking_metric_snapshots(
+        self, exercise_attempt_id: UUID
+    ) -> tuple[dict[str, float | None], dict[str, float | None]]:
+        response = self._speaking_response_repo.find_by_exercise_attempt_id(exercise_attempt_id)
+        if not response:
+            raise InvalidExerciseTypeError("Speaking response not found for manual review.")
+        metrics = self._speaking_metrics_repo.find_by_speaking_response_id(response.id)
+        if not metrics:
+            raise InvalidExerciseTypeError("Speaking metrics not found for manual review.")
+        original = {
+            "accuracy_score": metrics.original_accuracy_score if metrics.original_accuracy_score is not None else metrics.accuracy_score,
+            "fluency_score": metrics.original_fluency_score if metrics.original_fluency_score is not None else metrics.fluency_score,
+            "pronunciation_score": metrics.original_pronunciation_score if metrics.original_pronunciation_score is not None else metrics.pronunciation_score,
+            "completeness_score": metrics.original_completeness_score if metrics.original_completeness_score is not None else metrics.completeness_score,
+            "lexical_match": metrics.original_lexical_match if metrics.original_lexical_match is not None else (metrics.comparison_json or {}).get("lexical_match_percentage"),
+        }
+        current = {
+            "accuracy_score": metrics.current_accuracy_score if metrics.current_accuracy_score is not None else metrics.accuracy_score,
+            "fluency_score": metrics.current_fluency_score if metrics.current_fluency_score is not None else metrics.fluency_score,
+            "pronunciation_score": metrics.current_pronunciation_score if metrics.current_pronunciation_score is not None else metrics.pronunciation_score,
+            "completeness_score": metrics.current_completeness_score if metrics.current_completeness_score is not None else metrics.completeness_score,
+            "lexical_match": metrics.current_lexical_match if metrics.current_lexical_match is not None else (metrics.comparison_json or {}).get("lexical_match_percentage"),
+        }
+        return original, current
+
     def _review_writing(
         self, exercise_attempt_id: UUID, updates: dict[str, float]
     ) -> tuple[dict[str, float | None], dict[str, float | None], float, dict]:
@@ -285,6 +354,29 @@ class ManualReviewExerciseAttemptUseCase:
             "similarity_score": current_similarity,
         }
         return original, {**current, "similarity_score": current_similarity}, current_similarity, components
+
+    def _writing_metric_snapshots(
+        self, exercise_attempt_id: UUID
+    ) -> tuple[dict[str, float | None], dict[str, float | None]]:
+        response = self._writing_response_repo.find_by_exercise_attempt_id(exercise_attempt_id)
+        if not response:
+            raise InvalidExerciseTypeError("Writing response not found for manual review.")
+        metrics = self._writing_metrics_repo.find_by_writing_response_id(response.id)
+        if not metrics:
+            raise InvalidExerciseTypeError("Writing metrics not found for manual review.")
+        char_from_cer = round(max(0.0, 100.0 * (1.0 - metrics.cer)), 2) if metrics.cer is not None else None
+        word_from_wer = round(max(0.0, 100.0 * (1.0 - metrics.wer)), 2) if metrics.wer is not None else None
+        original = {
+            "char_accuracy": metrics.original_char_accuracy if metrics.original_char_accuracy is not None else char_from_cer,
+            "word_accuracy": metrics.original_word_accuracy if metrics.original_word_accuracy is not None else word_from_wer,
+            "similarity_score": metrics.original_similarity_score if metrics.original_similarity_score is not None else metrics.similarity_score,
+        }
+        current = {
+            "char_accuracy": metrics.current_char_accuracy if metrics.current_char_accuracy is not None else original["char_accuracy"],
+            "word_accuracy": metrics.current_word_accuracy if metrics.current_word_accuracy is not None else original["word_accuracy"],
+            "similarity_score": metrics.current_similarity_score if metrics.current_similarity_score is not None else metrics.similarity_score,
+        }
+        return original, current
 
     def _recalculate_result_if_exists(self, attempt_id: UUID) -> dict[str, float | None] | None:
         result = self._result_repo.find_by_attempt_id(attempt_id)
@@ -447,6 +539,7 @@ class ManualReviewExerciseAttemptUseCase:
             "included": included,
             "technical_status": score.technical_status.value if score else "INVALID",
             "manual_review_required": score.manual_review_required if score else True,
+            "review_status": ManualReviewExerciseAttemptUseCase._review_status(score),
             "quality_reasons": score.quality_reasons if score else ["MISSING_CANONICAL_SCORE"],
             "scoring_components": current_components,
             "original_scoring_components": original_components,
@@ -490,6 +583,18 @@ class ManualReviewExerciseAttemptUseCase:
         if score is None or ManualReviewExerciseAttemptUseCase._current_score(score) is None:
             return False
         return score.score_eligible or score.technical_status == TechnicalStatus.PARTIAL
+
+    @staticmethod
+    def _review_status(score: ExerciseScore | None) -> str:
+        if score is None:
+            return "pending"
+        if score.review_status:
+            return score.review_status
+        if score.manual_adjustment_applied:
+            return "overridden"
+        if score.manual_review_required:
+            return "pending"
+        return "not_required"
 
     @classmethod
     def _warning_metadata(cls, rows: list[tuple]) -> dict:
@@ -568,3 +673,14 @@ class ManualReviewExerciseAttemptUseCase:
         invalid = sorted(set(metrics) - allowed)
         if invalid:
             raise InvalidExerciseTypeError(f"Metrics are not editable for this exercise type: {', '.join(invalid)}.")
+
+    @staticmethod
+    def _validate_action(action: str) -> None:
+        if action not in MANUAL_REVIEW_ACTIONS:
+            raise InvalidExerciseTypeError(f"Unsupported manual review action: {action}.")
+
+    @staticmethod
+    def _validate_teacher_observation(teacher_observation: str | None) -> str:
+        if not teacher_observation or not teacher_observation.strip():
+            raise InvalidExerciseTypeError("teacher_observation is required for manual review.")
+        return teacher_observation.strip()

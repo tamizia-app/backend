@@ -255,6 +255,7 @@ class FinishAssessmentAttemptUseCase:
             "exclusion_reason": exclusion_reason,
             "technical_status": score.technical_status.value if score else "INVALID",
             "manual_review_required": score.manual_review_required if score else True,
+            "review_status": FinishAssessmentAttemptUseCase._review_status(score),
             "quality_reasons": score.quality_reasons if score else ["MISSING_CANONICAL_SCORE"],
             "review": {
                 "required": score.manual_review_required if score else True,
@@ -298,6 +299,18 @@ class FinishAssessmentAttemptUseCase:
         if score is None or FinishAssessmentAttemptUseCase._current_score(score) is None:
             return False
         return score.score_eligible or score.technical_status == TechnicalStatus.PARTIAL
+
+    @staticmethod
+    def _review_status(score: ExerciseScore | None) -> str:
+        if score is None:
+            return "pending"
+        if score.review_status:
+            return score.review_status
+        if score.manual_adjustment_applied:
+            return "overridden"
+        if score.manual_review_required:
+            return "pending"
+        return "not_required"
 
     @classmethod
     def _raise_if_not_interpretable(

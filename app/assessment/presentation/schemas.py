@@ -1,4 +1,5 @@
 from datetime import date, datetime
+from typing import Literal
 from uuid import UUID
 
 from pydantic import BaseModel, Field
@@ -361,6 +362,7 @@ class ExerciseSummary(BaseModel):
     original_scoring_components: dict = {}
     current_scoring_components: dict = {}
     manual_adjustment_applied: bool = False
+    review_status: str = "not_required"
     teacher_observation: str | None = None
 
 
@@ -737,6 +739,7 @@ class ExerciseReview(BaseModel):
     original_scoring_components: dict = {}
     current_scoring_components: dict = {}
     manual_adjustment_applied: bool = False
+    review_status: str = "not_required"
     teacher_observation: str | None = None
     adjusted_by_teacher_id: UUID | None = None
     adjusted_at: datetime | None = None
@@ -754,7 +757,8 @@ class ReviewResultResponse(BaseModel):
 
 
 class ManualReviewRequest(BaseModel):
-    metrics: dict[str, float] = Field(min_length=1)
+    action: Literal["confirm", "override_metrics"] = "override_metrics"
+    metrics: dict[str, float] | None = None
     teacher_observation: str | None = None
 
 
@@ -767,6 +771,7 @@ class ManualReviewResponse(BaseModel):
     current_metrics: dict[str, float | None]
     score_eligible: bool
     manual_adjustment_applied: bool
+    review_status: str
     teacher_observation: str | None = None
     adjusted_by_teacher_id: UUID | None = None
     adjusted_at: datetime | None = None

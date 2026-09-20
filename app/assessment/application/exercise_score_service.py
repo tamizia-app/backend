@@ -44,6 +44,7 @@ def persist_exercise_score(
             original_scoring_components=original_components,
             current_scoring_components=scoring_components,
             manual_adjustment_applied=False,
+            review_status="pending" if quality.manual_review_required else "not_required",
             teacher_observation=None,
             adjusted_by_teacher_id=None,
             adjusted_at=None,

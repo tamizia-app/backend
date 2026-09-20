@@ -1316,6 +1316,7 @@ class SQLAlchemyExerciseScoreRepository(ExerciseScoreRepository):
         model.original_scoring_components_json = score.original_scoring_components
         model.current_scoring_components_json = score.current_scoring_components
         model.manual_adjustment_applied = score.manual_adjustment_applied
+        model.review_status = score.review_status or self._default_review_status(score)
         model.teacher_observation = score.teacher_observation
         model.adjusted_by_teacher_id = score.adjusted_by_teacher_id
         model.adjusted_at = score.adjusted_at
@@ -1341,7 +1342,16 @@ class SQLAlchemyExerciseScoreRepository(ExerciseScoreRepository):
             original_scoring_components=dict(model.original_scoring_components_json or {}),
             current_scoring_components=dict(model.current_scoring_components_json or {}),
             manual_adjustment_applied=model.manual_adjustment_applied,
+            review_status=model.review_status,
             teacher_observation=model.teacher_observation,
             adjusted_by_teacher_id=model.adjusted_by_teacher_id,
             adjusted_at=model.adjusted_at,
         )
+
+    @staticmethod
+    def _default_review_status(score: ExerciseScore) -> str:
+        if score.manual_adjustment_applied:
+            return "overridden"
+        if score.manual_review_required:
+            return "pending"
+        return "not_required"

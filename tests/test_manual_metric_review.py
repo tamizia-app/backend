@@ -1,9 +1,12 @@
 from __future__ import annotations
 
 from datetime import datetime, timezone
+import importlib.util
+from pathlib import Path
 from uuid import UUID, uuid4
 
 import pytest
+from sqlalchemy import create_engine, text
 
 from app.assessment.application.exceptions import InvalidExerciseTypeError
 from app.assessment.application.use_cases.manual_review_exercise_attempt import (
@@ -52,6 +55,8 @@ def test_manual_review_speaking_updates_current_only_and_recalculates_score():
     assert score.score == score.current_score
     assert score.manual_adjustment_applied is True
     assert score.manual_review_required is False
+    assert score.review_status == "overridden"
+    assert result.review_status == "overridden"
     assert score.teacher_observation == "Ajuste docente."
     assert score.adjusted_by_teacher_id == fixture.teacher_id
     assert score.adjusted_at is not None
@@ -65,6 +70,7 @@ def test_manual_review_allows_partial_and_makes_it_score_eligible():
             exercise_attempt_id=fixture.exercise_attempt_id,
             teacher_id=fixture.teacher_id,
             metrics={"accuracy_score": 90},
+            teacher_observation="Acepto evidencia parcial.",
         )
     )
 
@@ -106,6 +112,7 @@ def test_manual_review_high_current_final_score_without_pending_review_stays_low
     assert updated_score.current_score == 90.0
     assert updated_score.manual_adjustment_applied is True
     assert updated_score.manual_review_required is False
+    assert updated_score.review_status == "overridden"
 
     snapshot_row = updated_result.current_scoring_snapshot_json[0]
     assert snapshot_row["scoring_components"] == snapshot_row["current_scoring_components"]
@@ -123,6 +130,7 @@ def test_manual_review_writing_snapshot_components_are_siblings_and_clean():
         ManualReviewExerciseAttemptCommand(
             exercise_attempt_id=fixture.exercise_attempt_id,
             teacher_id=fixture.teacher_id,
+            action="override_metrics",
             metrics={"char_accuracy": 80, "word_accuracy": 60},
             teacher_observation="Ajuste de escritura.",
         )
@@ -134,6 +142,7 @@ def test_manual_review_writing_snapshot_components_are_siblings_and_clean():
     assert updated_score.current_score == 75.0
     assert updated_score.score == updated_score.current_score
     assert updated_score.manual_adjustment_applied is True
+    assert updated_score.review_status == "overridden"
     assert updated_score.teacher_observation == "Ajuste de escritura."
     assert updated_score.adjusted_by_teacher_id == fixture.teacher_id
     assert updated_score.adjusted_at is not None
@@ -244,6 +253,7 @@ def test_manual_review_high_score_stays_low_when_another_included_exercise_is_pe
                 "completeness_score": 90,
                 "lexical_match": 90,
             },
+            teacher_observation="Ajuste alto.",
         )
     )
 
@@ -269,6 +279,7 @@ def test_manual_review_score_threshold_can_change_intervention_level():
                 "completeness_score": 45,
                 "lexical_match": 45,
             },
+            teacher_observation="Ajuste bajo.",
         )
     )
 
@@ -285,8 +296,130 @@ def test_manual_review_rejects_invalid_exercise():
                 exercise_attempt_id=fixture.exercise_attempt_id,
                 teacher_id=fixture.teacher_id,
                 metrics={"accuracy_score": 90},
+                teacher_observation="No debe aplicar.",
             )
         )
+
+
+def test_manual_review_confirm_clears_pending_without_changing_score_or_metrics():
+    fixture = _fixture(
+        TechnicalStatus.VALID,
+        score_eligible=True,
+        with_result=True,
+        primary_manual_review_required=True,
+    )
+    original_score = fixture.score_repo.item.score
+    original_metrics = fixture.speaking_metrics_repo.item
+
+    result = fixture.use_case.execute(
+        ManualReviewExerciseAttemptCommand(
+            exercise_attempt_id=fixture.exercise_attempt_id,
+            teacher_id=fixture.teacher_id,
+            action="confirm",
+            teacher_observation="Se revisó la evidencia y coincide con el resultado automático.",
+        )
+    )
+
+    updated_score = fixture.score_repo.item
+    assert result.current_score == original_score
+    assert updated_score.current_score == original_score
+    assert updated_score.manual_adjustment_applied is False
+    assert updated_score.manual_review_required is False
+    assert updated_score.review_status == "confirmed"
+    assert updated_score.teacher_observation == "Se revisó la evidencia y coincide con el resultado automático."
+    assert fixture.speaking_metrics_repo.item is original_metrics
+    assert fixture.speaking_metrics_repo.item.current_accuracy_score == 50
+    assert fixture.result_repo.item.speaking_review_required_count == 0
+    assert fixture.result_repo.item.intervention_level == InterventionLevel.MEDIUM
+    assert fixture.result_repo.item.current_scoring_snapshot_json[0]["review_status"] == "confirmed"
+
+
+def test_manual_review_validates_action_payloads():
+    fixture = _fixture(TechnicalStatus.VALID, score_eligible=True)
+
+    with pytest.raises(InvalidExerciseTypeError, match="teacher_observation is required"):
+        fixture.use_case.execute(
+            ManualReviewExerciseAttemptCommand(
+                exercise_attempt_id=fixture.exercise_attempt_id,
+                teacher_id=fixture.teacher_id,
+                action="confirm",
+            )
+        )
+
+    with pytest.raises(InvalidExerciseTypeError, match="teacher_observation is required"):
+        fixture.use_case.execute(
+            ManualReviewExerciseAttemptCommand(
+                exercise_attempt_id=fixture.exercise_attempt_id,
+                teacher_id=fixture.teacher_id,
+                action="confirm",
+                teacher_observation="  ",
+            )
+        )
+
+    with pytest.raises(InvalidExerciseTypeError, match="At least one metric"):
+        fixture.use_case.execute(
+            ManualReviewExerciseAttemptCommand(
+                exercise_attempt_id=fixture.exercise_attempt_id,
+                teacher_id=fixture.teacher_id,
+                action="override_metrics",
+                teacher_observation="Intento sin métricas.",
+            )
+        )
+
+    with pytest.raises(InvalidExerciseTypeError, match="Unsupported manual review action"):
+        fixture.use_case.execute(
+            ManualReviewExerciseAttemptCommand(
+                exercise_attempt_id=fixture.exercise_attempt_id,
+                teacher_id=fixture.teacher_id,
+                action="revert",
+                teacher_observation="No soportado en fase 1.",
+            )
+        )
+
+
+def test_manual_review_status_backfill_sql_maps_existing_flags():
+    migration_path = (
+        Path(__file__).resolve().parents[1]
+        / "alembic"
+        / "versions"
+        / "20260920_0014_manual_review_status.py"
+    )
+    spec = importlib.util.spec_from_file_location("manual_review_status_migration", migration_path)
+    migration = importlib.util.module_from_spec(spec)
+    assert spec.loader is not None
+    spec.loader.exec_module(migration)
+    engine = create_engine("sqlite:///:memory:")
+    with engine.begin() as conn:
+        conn.execute(
+            text(
+                """
+                CREATE TABLE assessment_exercise_scores (
+                    id INTEGER PRIMARY KEY,
+                    manual_adjustment_applied BOOLEAN NOT NULL,
+                    manual_review_required BOOLEAN NOT NULL,
+                    review_status VARCHAR(20) NOT NULL DEFAULT 'not_required'
+                )
+                """
+            )
+        )
+        conn.execute(
+            text(
+                """
+                INSERT INTO assessment_exercise_scores
+                    (id, manual_adjustment_applied, manual_review_required)
+                VALUES
+                    (1, true, false),
+                    (2, false, true),
+                    (3, false, false)
+                """
+            )
+        )
+        conn.execute(text(migration.BACKFILL_REVIEW_STATUS_SQL))
+        rows = conn.execute(
+            text("SELECT id, review_status FROM assessment_exercise_scores ORDER BY id")
+        ).fetchall()
+
+    assert [tuple(row) for row in rows] == [(1, "overridden"), (2, "pending"), (3, "not_required")]
 
 
 class _Fixture:
@@ -297,6 +430,7 @@ class _Fixture:
         *,
         with_result: bool = False,
         with_pending_writing: bool = False,
+        primary_manual_review_required: bool = False,
     ) -> None:
         now = datetime.now(timezone.utc)
         self.teacher_id = uuid4()
@@ -342,7 +476,7 @@ class _Fixture:
             score=50,
             score_eligible=score_eligible,
             technical_status=technical_status,
-            manual_review_required=technical_status != TechnicalStatus.VALID,
+            manual_review_required=primary_manual_review_required or technical_status != TechnicalStatus.VALID,
             quality_reasons=[],
             scoring_components={"accuracy_score": 50},
             created_at=now,
@@ -351,6 +485,11 @@ class _Fixture:
             current_score=50,
             original_scoring_components={"accuracy_score": 50},
             current_scoring_components={"accuracy_score": 50},
+            review_status=(
+                "pending"
+                if primary_manual_review_required or technical_status != TechnicalStatus.VALID
+                else "not_required"
+            ),
         )
         exercise_attempts = [
             ExerciseAttempt(
@@ -448,6 +587,7 @@ class _Fixture:
                     current_score=90,
                     original_scoring_components={"similarity_score": 90},
                     current_scoring_components={"similarity_score": 90},
+                    review_status="pending",
                 )
             )
         self.score_repo = _ScoreRepo(scores)
@@ -538,12 +678,14 @@ def _fixture(
     *,
     with_result: bool = False,
     with_pending_writing: bool = False,
+    primary_manual_review_required: bool = False,
 ) -> _Fixture:
     return _Fixture(
         technical_status,
         score_eligible,
         with_result=with_result,
         with_pending_writing=with_pending_writing,
+        primary_manual_review_required=primary_manual_review_required,
     )
 
 
@@ -599,6 +741,7 @@ class _WritingFixture:
                 "similarity_score": 87.25,
                 "original_scoring_components": {"similarity_score": 87.25},
             },
+            review_status="not_required",
         )
         exercise_attempts = [
             ExerciseAttempt(
