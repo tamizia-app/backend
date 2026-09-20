@@ -8,7 +8,7 @@ from uuid import UUID, uuid4
 import pytest
 from sqlalchemy import create_engine, text
 
-from app.assessment.application.exceptions import InvalidExerciseTypeError
+from app.assessment.application.exceptions import InvalidExerciseTypeError, ManualReviewVersionConflictError
 from app.assessment.application.use_cases.manual_review_exercise_attempt import (
     ManualReviewExerciseAttemptCommand,
     ManualReviewExerciseAttemptUseCase,
@@ -57,7 +57,11 @@ def test_manual_review_speaking_updates_current_only_and_recalculates_score():
     assert score.manual_adjustment_applied is True
     assert score.manual_review_required is False
     assert score.review_status == "overridden"
+    assert score.review_version == 1
     assert result.review_status == "overridden"
+    assert result.review_version == 1
+    assert result.review_event_summary["action"] == "override_metrics"
+    assert fixture.manual_review_event_repo.items[0].manual_metrics == {"accuracy_score": 90, "fluency_score": 80}
     assert score.teacher_observation == "Ajuste docente."
     assert score.adjusted_by_teacher_id == fixture.teacher_id
     assert score.adjusted_at is not None
@@ -398,12 +402,75 @@ def test_manual_review_confirm_clears_pending_without_changing_score_or_metrics(
     assert updated_score.manual_adjustment_applied is False
     assert updated_score.manual_review_required is False
     assert updated_score.review_status == "confirmed"
+    assert updated_score.review_version == 1
+    assert result.review_event_summary["action"] == "confirm"
+    assert fixture.manual_review_event_repo.items[0].before_state
+    assert fixture.manual_review_event_repo.items[0].after_state
     assert updated_score.teacher_observation == "Se revisó la evidencia y coincide con el resultado automático."
     assert fixture.speaking_metrics_repo.item is original_metrics
     assert fixture.speaking_metrics_repo.item.current_accuracy_score == 50
     assert fixture.result_repo.item.speaking_review_required_count == 0
     assert fixture.result_repo.item.intervention_level == InterventionLevel.MEDIUM
     assert fixture.result_repo.item.current_scoring_snapshot_json[0]["review_status"] == "confirmed"
+
+
+def test_manual_review_version_conflict_does_not_change_score_or_create_event():
+    fixture = _fixture(TechnicalStatus.VALID, score_eligible=True)
+    fixture.score_repo.item.review_version = 1
+
+    with pytest.raises(ManualReviewVersionConflictError) as exc:
+        fixture.use_case.execute(
+            ManualReviewExerciseAttemptCommand(
+                exercise_attempt_id=fixture.exercise_attempt_id,
+                teacher_id=fixture.teacher_id,
+                action="override_metrics",
+                metrics={"accuracy_score": 90},
+                base_review_version=0,
+                teacher_observation="Versión obsoleta.",
+            )
+        )
+
+    assert exc.value.status_code == 409
+    assert exc.value.detail["current_review_version"] == 1
+    assert fixture.score_repo.item.current_score == 50
+    assert fixture.score_repo.item.review_version == 1
+    assert fixture.manual_review_event_repo.items == []
+
+
+def test_manual_review_revert_restores_original_score_and_creates_event():
+    fixture = _writing_fixture()
+    fixture.use_case.execute(
+        ManualReviewExerciseAttemptCommand(
+            exercise_attempt_id=fixture.exercise_attempt_id,
+            teacher_id=fixture.teacher_id,
+            action="override_metrics",
+            metrics={"char_accuracy": 80, "word_accuracy": 60},
+            teacher_observation="Ajuste inicial.",
+        )
+    )
+    fixture.writing_response_repo.item.reviewed_recognized_text = "EL PERRO CORRE"
+
+    result = fixture.use_case.execute(
+        ManualReviewExerciseAttemptCommand(
+            exercise_attempt_id=fixture.exercise_attempt_id,
+            teacher_id=fixture.teacher_id,
+            action="revert",
+            base_review_version=1,
+            teacher_observation="Se revierte la revisión manual.",
+        )
+    )
+
+    score = fixture.score_repo.item
+    assert score.current_score == score.original_score == 87.25
+    assert score.manual_adjustment_applied is False
+    assert score.manual_review_required is False
+    assert score.review_status == "reverted"
+    assert score.review_version == 2
+    assert score.metric_sources is None
+    assert fixture.writing_response_repo.item.reviewed_recognized_text is None
+    assert result.review_event_summary["action"] == "revert"
+    assert [event.review_version for event in fixture.manual_review_event_repo.items] == [1, 2]
+    assert [event.action for event in fixture.manual_review_event_repo.items] == ["override_metrics", "revert"]
 
 
 def test_manual_review_validates_action_payloads():
@@ -443,8 +510,18 @@ def test_manual_review_validates_action_payloads():
             ManualReviewExerciseAttemptCommand(
                 exercise_attempt_id=fixture.exercise_attempt_id,
                 teacher_id=fixture.teacher_id,
-                action="revert",
+                action="delete",
                 teacher_observation="No soportado en fase 1.",
+            )
+        )
+
+    with pytest.raises(InvalidExerciseTypeError, match="base_review_version is required for revert"):
+        fixture.use_case.execute(
+            ManualReviewExerciseAttemptCommand(
+                exercise_attempt_id=fixture.exercise_attempt_id,
+                teacher_id=fixture.teacher_id,
+                action="revert",
+                teacher_observation="Revert sin versión.",
             )
         )
 
@@ -688,6 +765,7 @@ class _Fixture:
                 )
             )
         self.score_repo = _ScoreRepo(scores)
+        self.manual_review_event_repo = _EventRepo()
         self.speaking_response_repo = _ExerciseResponseRepo(
             SpeakingResponse(
                 id=speaking_response_id,
@@ -791,6 +869,7 @@ class _Fixture:
             writing_response_repo=_EmptyRepo(),
             writing_metrics_repo=_EmptyRepo(),
             result_repo=self.result_repo,
+            manual_review_event_repo=self.manual_review_event_repo,
         )
 
 
@@ -879,6 +958,7 @@ class _WritingFixture:
             )
         ]
         self.score_repo = _ScoreRepo([primary_score])
+        self.manual_review_event_repo = _EventRepo()
         self.writing_response_repo = _ExerciseResponseRepo(
             WritingResponse(
                 id=writing_response_id,
@@ -1006,6 +1086,7 @@ class _WritingFixture:
             writing_response_repo=self.writing_response_repo,
             writing_metrics_repo=self.writing_metrics_repo,
             result_repo=self.result_repo,
+            manual_review_event_repo=self.manual_review_event_repo,
         )
 
 
@@ -1115,6 +1196,21 @@ class _ResultRepo:
     def update(self, item: AssessmentResult) -> AssessmentResult:
         self.item = item
         return item
+
+
+class _EventRepo:
+    def __init__(self) -> None:
+        self.items = []
+
+    def create(self, event):
+        self.items.append(event)
+        return event
+
+    def find_by_assessment_attempt_id(self, attempt_id: UUID):
+        return [item for item in self.items if item.assessment_attempt_id == attempt_id]
+
+    def find_by_exercise_attempt_id(self, exercise_attempt_id: UUID):
+        return [item for item in self.items if item.exercise_attempt_id == exercise_attempt_id]
 
 
 class _EmptyRepo:

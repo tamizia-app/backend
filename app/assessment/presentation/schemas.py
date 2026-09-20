@@ -745,6 +745,8 @@ class ExerciseReview(BaseModel):
     reviewed_analysis: dict | None = None
     manual_adjustment_applied: bool = False
     review_status: str = "not_required"
+    review_version: int = 0
+    manual_review_history: list[dict] = []
     teacher_observation: str | None = None
     adjusted_by_teacher_id: UUID | None = None
     adjusted_at: datetime | None = None
@@ -762,10 +764,12 @@ class ReviewResultResponse(BaseModel):
 
 
 class ManualReviewRequest(BaseModel):
-    action: Literal["confirm", "override_metrics", "correct_evidence"] = "override_metrics"
+    action: Literal["confirm", "override_metrics", "correct_evidence", "revert"] = "override_metrics"
     metrics: dict[str, float] | None = None
     corrections: dict | None = None
     teacher_observation: str | None = None
+    base_review_version: int | None = None
+    expected_review_version: int | None = None
 
 
 class ManualReviewResponse(BaseModel):
@@ -776,9 +780,12 @@ class ManualReviewResponse(BaseModel):
     original_metrics: dict[str, float | None]
     current_metrics: dict[str, float | None]
     score_eligible: bool
+    manual_review_required: bool
     manual_adjustment_applied: bool
     review_status: str
+    review_version: int
     metric_sources: dict | None = None
+    review_event_summary: dict | None = None
     teacher_observation: str | None = None
     adjusted_by_teacher_id: UUID | None = None
     adjusted_at: datetime | None = None

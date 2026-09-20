@@ -25,6 +25,7 @@ class ExerciseScore:
     manual_adjustment_applied: bool = False
     review_status: str | None = None
     metric_sources: dict | None = None
+    review_version: int = 0
     teacher_observation: str | None = None
     adjusted_by_teacher_id: UUID | None = None
     adjusted_at: datetime | None = None
@@ -121,3 +122,22 @@ class AssessmentResult:
     current_final_score: float | None = None
     original_scoring_snapshot_json: list[dict] | None = None
     current_scoring_snapshot_json: list[dict] | None = None
+
+
+@dataclass
+class ManualReviewEvent:
+    id: UUID
+    exercise_attempt_id: UUID
+    assessment_attempt_id: UUID
+    teacher_id: UUID
+    review_version: int
+    action: str
+    teacher_observation: str
+    before_state: dict
+    after_state: dict
+    corrections: dict | None
+    manual_metrics: dict | None
+    metric_sources: dict | None
+    evidence_version: str | None
+    base_review_version: int | None
+    created_at: datetime

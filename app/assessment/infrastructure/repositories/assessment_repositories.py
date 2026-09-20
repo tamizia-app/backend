@@ -25,6 +25,7 @@ from app.assessment.application.ports.repositories import (
     TemplateRepository,
     WritingMetricsRepository,
     WritingResponseRepository,
+    ManualReviewEventRepository,
 )
 from app.assessment.domain.assessment import Assessment
 from app.assessment.domain.attempt import AssessmentAttempt, ExerciseAttempt
@@ -38,7 +39,7 @@ from app.assessment.domain.enums import (
 )
 from app.assessment.domain.exercise import AssessmentExercise
 from app.assessment.domain.metrics import AssessmentResult as AssessmentResultDomain
-from app.assessment.domain.metrics import ExerciseScore, SpeakingMetrics, WritingMetrics
+from app.assessment.domain.metrics import ExerciseScore, ManualReviewEvent, SpeakingMetrics, WritingMetrics
 from app.assessment.domain.prompt import ExpectedAnswer, PromptExercise
 from app.assessment.domain.question import MCAnswerOption, MCQuestion, OSAnswer, OSQuestion
 from app.assessment.domain.response import MCResponse, OSResponse, SpeakingResponse, WritingResponse
@@ -52,6 +53,7 @@ from app.assessment.infrastructure.models.exercise_model import AssessmentExerci
 from app.assessment.infrastructure.models.metrics_model import (
     AssessmentResultModel,
     ExerciseScoreModel,
+    ManualReviewEventModel,
     SpeakingMetricsModel,
     WritingMetricsModel,
 )
@@ -1324,6 +1326,7 @@ class SQLAlchemyExerciseScoreRepository(ExerciseScoreRepository):
         model.manual_adjustment_applied = score.manual_adjustment_applied
         model.review_status = score.review_status or self._default_review_status(score)
         model.metric_sources_json = score.metric_sources
+        model.review_version = score.review_version
         model.teacher_observation = score.teacher_observation
         model.adjusted_by_teacher_id = score.adjusted_by_teacher_id
         model.adjusted_at = score.adjusted_at
@@ -1351,6 +1354,7 @@ class SQLAlchemyExerciseScoreRepository(ExerciseScoreRepository):
             manual_adjustment_applied=model.manual_adjustment_applied,
             review_status=model.review_status,
             metric_sources=dict(model.metric_sources_json or {}) if model.metric_sources_json is not None else None,
+            review_version=model.review_version,
             teacher_observation=model.teacher_observation,
             adjusted_by_teacher_id=model.adjusted_by_teacher_id,
             adjusted_at=model.adjusted_at,
@@ -1363,3 +1367,65 @@ class SQLAlchemyExerciseScoreRepository(ExerciseScoreRepository):
         if score.manual_review_required:
             return "pending"
         return "not_required"
+
+
+class SQLAlchemyManualReviewEventRepository(ManualReviewEventRepository):
+    def __init__(self, db: Session) -> None:
+        self._db = db
+
+    def create(self, event: ManualReviewEvent) -> ManualReviewEvent:
+        model = ManualReviewEventModel(
+            exercise_attempt_id=event.exercise_attempt_id,
+            assessment_attempt_id=event.assessment_attempt_id,
+            teacher_id=event.teacher_id,
+            review_version=event.review_version,
+            action=event.action,
+            teacher_observation=event.teacher_observation,
+            before_state_json=event.before_state,
+            after_state_json=event.after_state,
+            corrections_json=event.corrections,
+            manual_metrics_json=event.manual_metrics,
+            metric_sources_json=event.metric_sources,
+            evidence_version=event.evidence_version,
+            base_review_version=event.base_review_version,
+            created_at=event.created_at,
+        )
+        self._db.add(model)
+        self._db.flush()
+        return self._to_domain(model)
+
+    def find_by_assessment_attempt_id(self, attempt_id: UUID) -> list[ManualReviewEvent]:
+        models = self._db.scalars(
+            select(ManualReviewEventModel)
+            .where(ManualReviewEventModel.assessment_attempt_id == attempt_id)
+            .order_by(ManualReviewEventModel.exercise_attempt_id, ManualReviewEventModel.review_version)
+        )
+        return [self._to_domain(model) for model in models]
+
+    def find_by_exercise_attempt_id(self, exercise_attempt_id: UUID) -> list[ManualReviewEvent]:
+        models = self._db.scalars(
+            select(ManualReviewEventModel)
+            .where(ManualReviewEventModel.exercise_attempt_id == exercise_attempt_id)
+            .order_by(ManualReviewEventModel.review_version)
+        )
+        return [self._to_domain(model) for model in models]
+
+    @staticmethod
+    def _to_domain(model: ManualReviewEventModel) -> ManualReviewEvent:
+        return ManualReviewEvent(
+            id=model.id,
+            exercise_attempt_id=model.exercise_attempt_id,
+            assessment_attempt_id=model.assessment_attempt_id,
+            teacher_id=model.teacher_id,
+            review_version=model.review_version,
+            action=model.action,
+            teacher_observation=model.teacher_observation,
+            before_state=dict(model.before_state_json or {}),
+            after_state=dict(model.after_state_json or {}),
+            corrections=dict(model.corrections_json or {}) if model.corrections_json is not None else None,
+            manual_metrics=dict(model.manual_metrics_json or {}) if model.manual_metrics_json is not None else None,
+            metric_sources=dict(model.metric_sources_json or {}) if model.metric_sources_json is not None else None,
+            evidence_version=model.evidence_version,
+            base_review_version=model.base_review_version,
+            created_at=model.created_at,
+        )

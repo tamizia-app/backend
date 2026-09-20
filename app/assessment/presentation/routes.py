@@ -109,6 +109,7 @@ from app.assessment.infrastructure.repositories.assessment_repositories import (
     SQLAlchemyExerciseScoreRepository,
     SQLAlchemyExerciseRepository,
     SQLAlchemyExpectedAnswerRepository,
+    SQLAlchemyManualReviewEventRepository,
     SQLAlchemyMCAnswerOptionRepository,
     SQLAlchemyMCQuestionRepository,
     SQLAlchemyMCResponseRepository,
@@ -1826,6 +1827,7 @@ def manual_review_exercise_attempt(
         writing_response_repo=SQLAlchemyWritingResponseRepository(db),
         writing_metrics_repo=SQLAlchemyWritingMetricsRepository(db),
         result_repo=SQLAlchemyAssessmentResultRepository(db),
+        manual_review_event_repo=SQLAlchemyManualReviewEventRepository(db),
     )
     try:
         result = uc.execute(
@@ -1836,6 +1838,8 @@ def manual_review_exercise_attempt(
                 corrections=request.corrections,
                 action=request.action,
                 teacher_observation=request.teacher_observation,
+                base_review_version=request.base_review_version,
+                expected_review_version=request.expected_review_version,
             )
         )
     except AssessmentException as e:
@@ -1849,9 +1853,12 @@ def manual_review_exercise_attempt(
         original_metrics=result.original_metrics,
         current_metrics=result.current_metrics,
         score_eligible=result.score_eligible,
+        manual_review_required=result.manual_review_required,
         manual_adjustment_applied=result.manual_adjustment_applied,
         review_status=result.review_status,
+        review_version=result.review_version,
         metric_sources=result.metric_sources,
+        review_event_summary=result.review_event_summary,
         teacher_observation=result.teacher_observation,
         adjusted_by_teacher_id=result.adjusted_by_teacher_id,
         adjusted_at=result.adjusted_at,
@@ -2111,9 +2118,13 @@ def get_attempt_review(
     writing_resp_repo = SQLAlchemyWritingResponseRepository(db)
     writing_metrics_repo = SQLAlchemyWritingMetricsRepository(db)
     score_repo = SQLAlchemyExerciseScoreRepository(db)
+    review_event_repo = SQLAlchemyManualReviewEventRepository(db)
     storage = AzureAssessmentBlobStorage(get_settings())
 
     exercise_attempts = ea_repo.find_by_assessment_attempt_id(attempt_id)
+    event_map = {}
+    for event in review_event_repo.find_by_assessment_attempt_id(attempt_id):
+        event_map.setdefault(event.exercise_attempt_id, []).append(event)
 
     te_map = {}
     if assessment:
@@ -2344,6 +2355,20 @@ def get_attempt_review(
                 reviewed_analysis=reviewed_analysis,
                 manual_adjustment_applied=canonical.manual_adjustment_applied if canonical else False,
                 review_status=_review_status(canonical),
+                review_version=canonical.review_version if canonical else 0,
+                manual_review_history=[
+                    {
+                        "review_version": event.review_version,
+                        "action": event.action,
+                        "teacher_id": str(event.teacher_id),
+                        "teacher_observation": event.teacher_observation,
+                        "created_at": event.created_at,
+                        "corrections": event.corrections,
+                        "manual_metrics": event.manual_metrics,
+                        "metric_sources": event.metric_sources,
+                    }
+                    for event in event_map.get(ea.id, [])
+                ],
                 teacher_observation=canonical.teacher_observation if canonical else None,
                 adjusted_by_teacher_id=canonical.adjusted_by_teacher_id if canonical else None,
                 adjusted_at=canonical.adjusted_at if canonical else None,

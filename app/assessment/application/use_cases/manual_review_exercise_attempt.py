@@ -8,6 +8,7 @@ from app.assessment.application.exceptions import (
     AssessmentNotFoundError,
     ExerciseAttemptNotFoundError,
     InvalidExerciseTypeError,
+    ManualReviewVersionConflictError,
     AttemptNotFoundError,
 )
 from app.assessment.application.ports.repositories import (
@@ -18,6 +19,7 @@ from app.assessment.application.ports.repositories import (
     ExerciseRepository,
     ExerciseScoreRepository,
     ExpectedAnswerRepository,
+    ManualReviewEventRepository,
     PromptExerciseRepository,
     SpeakingMetricsRepository,
     SpeakingResponseRepository,
@@ -26,7 +28,7 @@ from app.assessment.application.ports.repositories import (
     WritingResponseRepository,
 )
 from app.assessment.domain.enums import ExerciseType, InterventionLevel, TechnicalStatus
-from app.assessment.domain.metrics import AssessmentResult, ExerciseScore, SpeakingMetrics, WritingMetrics
+from app.assessment.domain.metrics import AssessmentResult, ExerciseScore, ManualReviewEvent, SpeakingMetrics, WritingMetrics
 from app.assessment.domain.text_comparison import compare_texts
 from app.assessment.domain.technical_quality import calculate_reading_score
 from app.assessment.domain.template import validate_template_exercise_points
@@ -44,10 +46,12 @@ WRITING_REVIEW_METRICS = {"char_accuracy", "word_accuracy"}
 MANUAL_REVIEW_ACTION_CONFIRM = "confirm"
 MANUAL_REVIEW_ACTION_OVERRIDE_METRICS = "override_metrics"
 MANUAL_REVIEW_ACTION_CORRECT_EVIDENCE = "correct_evidence"
+MANUAL_REVIEW_ACTION_REVERT = "revert"
 MANUAL_REVIEW_ACTIONS = {
     MANUAL_REVIEW_ACTION_CONFIRM,
     MANUAL_REVIEW_ACTION_OVERRIDE_METRICS,
     MANUAL_REVIEW_ACTION_CORRECT_EVIDENCE,
+    MANUAL_REVIEW_ACTION_REVERT,
 }
 
 
@@ -59,6 +63,8 @@ class ManualReviewExerciseAttemptCommand:
     corrections: dict | None = None
     action: str = MANUAL_REVIEW_ACTION_OVERRIDE_METRICS
     teacher_observation: str | None = None
+    base_review_version: int | None = None
+    expected_review_version: int | None = None
 
 
 @dataclass
@@ -70,9 +76,12 @@ class ManualReviewExerciseAttemptResult:
     original_metrics: dict[str, float | None]
     current_metrics: dict[str, float | None]
     score_eligible: bool
+    manual_review_required: bool
     manual_adjustment_applied: bool
     review_status: str
+    review_version: int
     metric_sources: dict | None
+    review_event_summary: dict | None
     teacher_observation: str | None
     adjusted_by_teacher_id: UUID | None
     adjusted_at: datetime | None
@@ -96,6 +105,7 @@ class ManualReviewExerciseAttemptUseCase:
         writing_response_repo: WritingResponseRepository,
         writing_metrics_repo: WritingMetricsRepository,
         result_repo: AssessmentResultRepository,
+        manual_review_event_repo: ManualReviewEventRepository,
     ) -> None:
         self._exercise_attempt_repo = exercise_attempt_repo
         self._assessment_attempt_repo = assessment_attempt_repo
@@ -110,6 +120,7 @@ class ManualReviewExerciseAttemptUseCase:
         self._writing_response_repo = writing_response_repo
         self._writing_metrics_repo = writing_metrics_repo
         self._result_repo = result_repo
+        self._manual_review_event_repo = manual_review_event_repo
 
     def execute(self, command: ManualReviewExerciseAttemptCommand) -> ManualReviewExerciseAttemptResult:
         action = command.action or MANUAL_REVIEW_ACTION_OVERRIDE_METRICS
@@ -139,6 +150,16 @@ class ManualReviewExerciseAttemptUseCase:
             raise InvalidExerciseTypeError(
                 "Manual review is not allowed for INVALID exercises. New evidence is required."
             )
+        provided_review_version = self._provided_review_version(command)
+        if provided_review_version is not None and provided_review_version != existing_score.review_version:
+            raise ManualReviewVersionConflictError(
+                current_review_version=existing_score.review_version,
+                provided_review_version=provided_review_version,
+            )
+        if action == MANUAL_REVIEW_ACTION_REVERT and provided_review_version is None:
+            raise InvalidExerciseTypeError("base_review_version is required for revert.")
+
+        before_state = self._review_state(exercise.type, exercise_attempt.id, existing_score)
 
         if action == MANUAL_REVIEW_ACTION_CONFIRM:
             original_metrics, current_metrics, current_score, current_components = self._confirm_review(
@@ -170,14 +191,23 @@ class ManualReviewExerciseAttemptUseCase:
             )
             manual_adjustment_applied = True
             review_status = "overridden"
+        elif action == MANUAL_REVIEW_ACTION_REVERT:
+            original_metrics, current_metrics, current_score, current_components, metric_sources = self._revert_review(
+                exercise.type, exercise_attempt.id, existing_score
+            )
+            manual_adjustment_applied = False
+            review_status = "reverted"
         else:
             raise InvalidExerciseTypeError(
                 "Manual metric review is only allowed for READING_SPEAKING and READING_WRITING exercises."
             )
         if action != MANUAL_REVIEW_ACTION_CORRECT_EVIDENCE:
             metric_sources = self._metric_sources_for_action(action, exercise.type, command.metrics or {})
+        if action == MANUAL_REVIEW_ACTION_REVERT:
+            metric_sources = None
 
         now = datetime.now(timezone.utc)
+        next_review_version = existing_score.review_version + 1
         score_eligible = existing_score.score_eligible or existing_score.technical_status == TechnicalStatus.PARTIAL
         quality_reasons = list(existing_score.quality_reasons)
         if existing_score.technical_status == TechnicalStatus.PARTIAL and "MANUAL_REVIEW_ACCEPTED_PARTIAL" not in quality_reasons:
@@ -213,6 +243,7 @@ class ManualReviewExerciseAttemptUseCase:
                 manual_adjustment_applied=manual_adjustment_applied,
                 review_status=review_status,
                 metric_sources=metric_sources,
+                review_version=next_review_version,
                 teacher_observation=teacher_observation,
                 adjusted_by_teacher_id=command.teacher_id,
                 adjusted_at=now,
@@ -220,6 +251,26 @@ class ManualReviewExerciseAttemptUseCase:
         )
 
         assessment_result = self._recalculate_result_if_exists(attempt.id)
+        after_state = self._review_state(exercise.type, exercise_attempt.id, updated_score)
+        review_event = self._manual_review_event_repo.create(
+            ManualReviewEvent(
+                id=UUID(int=0),
+                exercise_attempt_id=exercise_attempt.id,
+                assessment_attempt_id=attempt.id,
+                teacher_id=command.teacher_id,
+                review_version=next_review_version,
+                action=action,
+                teacher_observation=teacher_observation,
+                before_state=before_state,
+                after_state=after_state,
+                corrections=command.corrections if action == MANUAL_REVIEW_ACTION_CORRECT_EVIDENCE else None,
+                manual_metrics=command.metrics if action == MANUAL_REVIEW_ACTION_OVERRIDE_METRICS else None,
+                metric_sources=updated_score.metric_sources,
+                evidence_version="reviewed_text_v1" if action == MANUAL_REVIEW_ACTION_CORRECT_EVIDENCE else None,
+                base_review_version=provided_review_version,
+                created_at=now,
+            )
+        )
         return ManualReviewExerciseAttemptResult(
             exercise_attempt_id=exercise_attempt.id,
             exercise_type=exercise.type,
@@ -228,13 +279,57 @@ class ManualReviewExerciseAttemptUseCase:
             original_metrics=original_metrics,
             current_metrics=current_metrics,
             score_eligible=updated_score.score_eligible,
+            manual_review_required=updated_score.manual_review_required,
             manual_adjustment_applied=updated_score.manual_adjustment_applied,
             review_status=self._review_status(updated_score),
+            review_version=updated_score.review_version,
             metric_sources=updated_score.metric_sources,
+            review_event_summary=self._event_summary(review_event),
             teacher_observation=updated_score.teacher_observation,
             adjusted_by_teacher_id=updated_score.adjusted_by_teacher_id,
             adjusted_at=updated_score.adjusted_at,
             assessment_result=assessment_result,
+        )
+
+    def _revert_review(
+        self,
+        exercise_type: ExerciseType,
+        exercise_attempt_id: UUID,
+        existing_score: ExerciseScore,
+    ) -> tuple[dict[str, float | None], dict[str, float | None], float, dict, None]:
+        if existing_score.original_score is None:
+            raise InvalidExerciseTypeError("Exercise does not have an original score to revert.")
+        if exercise_type == ExerciseType.READING_SPEAKING:
+            original, _ = self._speaking_metric_snapshots(exercise_attempt_id)
+            response = self._speaking_response_repo.find_by_exercise_attempt_id(exercise_attempt_id)
+            metrics = self._speaking_metrics_repo.find_by_speaking_response_id(response.id) if response else None
+            if response:
+                response.reviewed_free_transcription_text = None
+                self._speaking_response_repo.update(response)
+            if metrics:
+                metrics.current_accuracy_score = original["accuracy_score"]
+                metrics.current_fluency_score = original["fluency_score"]
+                metrics.current_pronunciation_score = original["pronunciation_score"]
+                metrics.current_completeness_score = original["completeness_score"]
+                metrics.current_lexical_match = original["lexical_match"]
+                self._speaking_metrics_repo.update(metrics)
+            return original, original, existing_score.original_score, self._original_scoring_components(existing_score), None
+        if exercise_type == ExerciseType.READING_WRITING:
+            original, _ = self._writing_metric_snapshots(exercise_attempt_id)
+            response = self._writing_response_repo.find_by_exercise_attempt_id(exercise_attempt_id)
+            metrics = self._writing_metrics_repo.find_by_writing_response_id(response.id) if response else None
+            if response:
+                response.reviewed_recognized_text = None
+                self._writing_response_repo.update(response)
+            if metrics:
+                metrics.current_char_accuracy = original["char_accuracy"]
+                metrics.current_word_accuracy = original["word_accuracy"]
+                metrics.current_similarity_score = original["similarity_score"]
+                metrics.similarity_score = original["similarity_score"]
+                self._writing_metrics_repo.update(metrics)
+            return original, original, existing_score.original_score, self._original_scoring_components(existing_score), None
+        raise InvalidExerciseTypeError(
+            "Manual metric review is only allowed for READING_SPEAKING and READING_WRITING exercises."
         )
 
     def _confirm_review(
@@ -852,6 +947,66 @@ class ManualReviewExerciseAttemptUseCase:
         if not teacher_observation or not teacher_observation.strip():
             raise InvalidExerciseTypeError("teacher_observation is required for manual review.")
         return teacher_observation.strip()
+
+    @staticmethod
+    def _provided_review_version(command: ManualReviewExerciseAttemptCommand) -> int | None:
+        return (
+            command.base_review_version
+            if command.base_review_version is not None
+            else command.expected_review_version
+        )
+
+    def _review_state(
+        self,
+        exercise_type: ExerciseType,
+        exercise_attempt_id: UUID,
+        score: ExerciseScore,
+    ) -> dict:
+        if exercise_type == ExerciseType.READING_SPEAKING:
+            original_metrics, current_metrics = self._speaking_metric_snapshots(exercise_attempt_id)
+            response = self._speaking_response_repo.find_by_exercise_attempt_id(exercise_attempt_id)
+            reviewed_recognized_text = None
+            reviewed_free_transcription_text = response.reviewed_free_transcription_text if response else None
+        elif exercise_type == ExerciseType.READING_WRITING:
+            original_metrics, current_metrics = self._writing_metric_snapshots(exercise_attempt_id)
+            response = self._writing_response_repo.find_by_exercise_attempt_id(exercise_attempt_id)
+            reviewed_recognized_text = response.reviewed_recognized_text if response else None
+            reviewed_free_transcription_text = None
+        else:
+            original_metrics, current_metrics = {}, {}
+            reviewed_recognized_text = None
+            reviewed_free_transcription_text = None
+
+        return {
+            "review_status": self._review_status(score),
+            "review_version": score.review_version,
+            "manual_review_required": score.manual_review_required,
+            "manual_adjustment_applied": score.manual_adjustment_applied,
+            "original_score": score.original_score,
+            "current_score": self._current_score(score),
+            "original_metrics": original_metrics,
+            "current_metrics": current_metrics,
+            "teacher_observation": score.teacher_observation,
+            "adjusted_by_teacher_id": str(score.adjusted_by_teacher_id) if score.adjusted_by_teacher_id else None,
+            "adjusted_at": score.adjusted_at.isoformat() if score.adjusted_at else None,
+            "reviewed_recognized_text": reviewed_recognized_text,
+            "reviewed_free_transcription_text": reviewed_free_transcription_text,
+            "metric_sources": score.metric_sources,
+        }
+
+    @staticmethod
+    def _event_summary(event: ManualReviewEvent) -> dict:
+        return {
+            "review_version": event.review_version,
+            "action": event.action,
+            "teacher_id": str(event.teacher_id),
+            "teacher_observation": event.teacher_observation,
+            "created_at": event.created_at.isoformat(),
+            "corrections": event.corrections,
+            "manual_metrics": event.manual_metrics,
+            "metric_sources": event.metric_sources,
+            "base_review_version": event.base_review_version,
+        }
 
     @staticmethod
     def _metric_sources_for_action(action: str, exercise_type: ExerciseType, metrics: dict[str, float]) -> dict | None:

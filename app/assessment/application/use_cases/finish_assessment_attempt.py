@@ -256,6 +256,7 @@ class FinishAssessmentAttemptUseCase:
             "technical_status": score.technical_status.value if score else "INVALID",
             "manual_review_required": score.manual_review_required if score else True,
             "review_status": FinishAssessmentAttemptUseCase._review_status(score),
+            "review_version": score.review_version if score else 0,
             "metric_sources": score.metric_sources if score else None,
             "quality_reasons": score.quality_reasons if score else ["MISSING_CANONICAL_SCORE"],
             "review": {

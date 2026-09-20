@@ -675,6 +675,8 @@ def test_finish_get_result_and_review_expose_phase2_scoring_contract(
     assert {"metric_sources", "automatic_analysis", "reviewed_analysis"}.issubset(
         review_payload["exercise_reviews"][0]
     )
+    assert review_payload["exercise_reviews"][0]["review_version"] == 0
+    assert review_payload["exercise_reviews"][0]["manual_review_history"] == []
 
 
 def test_low_coverage_response_returns_structured_not_interpretable_error(

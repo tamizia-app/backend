@@ -116,3 +116,13 @@ class InvalidTemplateExercisePointsError(AssessmentException):
     def __init__(self, detail: str = "Template exercise points must be 1, 2, or 3.") -> None:
         self.status_code = 400
         self.detail = detail
+
+
+class ManualReviewVersionConflictError(AssessmentException):
+    def __init__(self, *, current_review_version: int, provided_review_version: int) -> None:
+        self.status_code = 409
+        self.detail = {
+            "code": "MANUAL_REVIEW_VERSION_CONFLICT",
+            "current_review_version": current_review_version,
+            "provided_review_version": provided_review_version,
+        }
