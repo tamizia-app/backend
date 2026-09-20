@@ -37,6 +37,7 @@ class SpeakingResponse:
     updated_at: datetime
     free_transcription_text: str | None = None
     assessment_recognized_text: str | None = None
+    reviewed_free_transcription_text: str | None = None
 
 
 @dataclass
@@ -53,3 +54,4 @@ class WritingResponse:
     canvas_metadata_json: dict | None = None
     input_metadata_json: dict | None = None
     frontend_metrics_json: dict | None = None
+    reviewed_recognized_text: str | None = None

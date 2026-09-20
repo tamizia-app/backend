@@ -865,6 +865,7 @@ class SQLAlchemySpeakingResponseRepository(SpeakingResponseRepository):
             recognized_text=r.recognized_text,
             free_transcription_text=r.free_transcription_text,
             assessment_recognized_text=r.assessment_recognized_text,
+            reviewed_free_transcription_text=r.reviewed_free_transcription_text,
         )
         self._db.add(model)
         self._db.flush()
@@ -880,6 +881,7 @@ class SQLAlchemySpeakingResponseRepository(SpeakingResponseRepository):
             model.recognized_text = r.recognized_text
             model.free_transcription_text = r.free_transcription_text
             model.assessment_recognized_text = r.assessment_recognized_text
+            model.reviewed_free_transcription_text = r.reviewed_free_transcription_text
             self._db.flush()
         return r
 
@@ -895,6 +897,7 @@ class SQLAlchemySpeakingResponseRepository(SpeakingResponseRepository):
             recognized_text=model.recognized_text,
             free_transcription_text=model.free_transcription_text,
             assessment_recognized_text=model.assessment_recognized_text,
+            reviewed_free_transcription_text=model.reviewed_free_transcription_text,
             created_at=model.created_at,
             updated_at=model.updated_at,
         )
@@ -919,6 +922,7 @@ class SQLAlchemyWritingResponseRepository(WritingResponseRepository):
             original_filename=r.original_filename,
             content_type=r.content_type,
             recognized_text=r.recognized_text,
+            reviewed_recognized_text=r.reviewed_recognized_text,
             strokes_json=r.strokes_json,
             canvas_metadata_json=r.canvas_metadata_json,
             input_metadata_json=r.input_metadata_json,
@@ -935,6 +939,7 @@ class SQLAlchemyWritingResponseRepository(WritingResponseRepository):
             model.original_filename = r.original_filename
             model.content_type = r.content_type
             model.recognized_text = r.recognized_text
+            model.reviewed_recognized_text = r.reviewed_recognized_text
             model.strokes_json = r.strokes_json
             model.canvas_metadata_json = r.canvas_metadata_json
             model.input_metadata_json = r.input_metadata_json
@@ -951,6 +956,7 @@ class SQLAlchemyWritingResponseRepository(WritingResponseRepository):
             original_filename=model.original_filename,
             content_type=model.content_type,
             recognized_text=model.recognized_text,
+            reviewed_recognized_text=model.reviewed_recognized_text,
             strokes_json=model.strokes_json,
             canvas_metadata_json=model.canvas_metadata_json,
             input_metadata_json=model.input_metadata_json,
@@ -1317,6 +1323,7 @@ class SQLAlchemyExerciseScoreRepository(ExerciseScoreRepository):
         model.current_scoring_components_json = score.current_scoring_components
         model.manual_adjustment_applied = score.manual_adjustment_applied
         model.review_status = score.review_status or self._default_review_status(score)
+        model.metric_sources_json = score.metric_sources
         model.teacher_observation = score.teacher_observation
         model.adjusted_by_teacher_id = score.adjusted_by_teacher_id
         model.adjusted_at = score.adjusted_at
@@ -1343,6 +1350,7 @@ class SQLAlchemyExerciseScoreRepository(ExerciseScoreRepository):
             current_scoring_components=dict(model.current_scoring_components_json or {}),
             manual_adjustment_applied=model.manual_adjustment_applied,
             review_status=model.review_status,
+            metric_sources=dict(model.metric_sources_json or {}) if model.metric_sources_json is not None else None,
             teacher_observation=model.teacher_observation,
             adjusted_by_teacher_id=model.adjusted_by_teacher_id,
             adjusted_at=model.adjusted_at,

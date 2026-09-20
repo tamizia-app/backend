@@ -671,6 +671,7 @@ class SpeakingResponseReview(BaseModel):
     free_transcription_text: str | None = None
     assessment_recognized_text: str | None = None
     recognized_text: str | None = None
+    reviewed_free_transcription_text: str | None = None
 
 
 class SpeakingMetricsReview(BaseModel):
@@ -689,6 +690,7 @@ class WritingResponseReview(BaseModel):
     image_blob_path: str | None = None
     image_url: str | None = None
     recognized_text: str | None = None
+    reviewed_recognized_text: str | None = None
     original_filename: str | None = None
     content_type: str | None = None
 
@@ -738,6 +740,9 @@ class ExerciseReview(BaseModel):
     scoring_components: dict = {}
     original_scoring_components: dict = {}
     current_scoring_components: dict = {}
+    metric_sources: dict | None = None
+    automatic_analysis: dict | None = None
+    reviewed_analysis: dict | None = None
     manual_adjustment_applied: bool = False
     review_status: str = "not_required"
     teacher_observation: str | None = None
@@ -757,8 +762,9 @@ class ReviewResultResponse(BaseModel):
 
 
 class ManualReviewRequest(BaseModel):
-    action: Literal["confirm", "override_metrics"] = "override_metrics"
+    action: Literal["confirm", "override_metrics", "correct_evidence"] = "override_metrics"
     metrics: dict[str, float] | None = None
+    corrections: dict | None = None
     teacher_observation: str | None = None
 
 
@@ -772,6 +778,7 @@ class ManualReviewResponse(BaseModel):
     score_eligible: bool
     manual_adjustment_applied: bool
     review_status: str
+    metric_sources: dict | None = None
     teacher_observation: str | None = None
     adjusted_by_teacher_id: UUID | None = None
     adjusted_at: datetime | None = None

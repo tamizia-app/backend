@@ -24,6 +24,7 @@ class ExerciseScore:
     current_scoring_components: dict | None = None
     manual_adjustment_applied: bool = False
     review_status: str | None = None
+    metric_sources: dict | None = None
     teacher_observation: str | None = None
     adjusted_by_teacher_id: UUID | None = None
     adjusted_at: datetime | None = None

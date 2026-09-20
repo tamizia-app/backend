@@ -672,6 +672,9 @@ def test_finish_get_result_and_review_expose_phase2_scoring_contract(
         invalid_or_excluded_exercise_count=0,
     )
     assert {item["review_status"] for item in review_payload["exercise_reviews"]} == {"not_required"}
+    assert {"metric_sources", "automatic_analysis", "reviewed_analysis"}.issubset(
+        review_payload["exercise_reviews"][0]
+    )
 
 
 def test_low_coverage_response_returns_structured_not_interpretable_error(

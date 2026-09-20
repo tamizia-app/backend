@@ -417,6 +417,16 @@ def _review_status(canonical) -> str:
     return "not_required"
 
 
+def _metric_sources(canonical) -> dict | None:
+    return canonical.metric_sources if canonical else None
+
+
+def _reviewed_analysis(canonical) -> dict | None:
+    components = _current_scoring_components(canonical)
+    reviewed = components.get("reviewed_analysis")
+    return reviewed if isinstance(reviewed, dict) else None
+
+
 def _template_response(template) -> TemplateResponse:
     return TemplateResponse(
         template_id=template.template_id,
@@ -1808,6 +1818,8 @@ def manual_review_exercise_attempt(
         assessment_repo=SQLAlchemyAssessmentRepository(db),
         template_exercise_repo=SQLAlchemyTemplateExerciseRepository(db),
         exercise_repo=SQLAlchemyExerciseRepository(db),
+        prompt_exercise_repo=SQLAlchemyPromptExerciseRepository(db),
+        expected_answer_repo=SQLAlchemyExpectedAnswerRepository(db),
         exercise_score_repo=SQLAlchemyExerciseScoreRepository(db),
         speaking_response_repo=SQLAlchemySpeakingResponseRepository(db),
         speaking_metrics_repo=SQLAlchemySpeakingMetricsRepository(db),
@@ -1821,6 +1833,7 @@ def manual_review_exercise_attempt(
                 exercise_attempt_id=exercise_attempt_id,
                 teacher_id=teacher_id,
                 metrics=request.metrics,
+                corrections=request.corrections,
                 action=request.action,
                 teacher_observation=request.teacher_observation,
             )
@@ -1838,6 +1851,7 @@ def manual_review_exercise_attempt(
         score_eligible=result.score_eligible,
         manual_adjustment_applied=result.manual_adjustment_applied,
         review_status=result.review_status,
+        metric_sources=result.metric_sources,
         teacher_observation=result.teacher_observation,
         adjusted_by_teacher_id=result.adjusted_by_teacher_id,
         adjusted_at=result.adjusted_at,
@@ -2125,6 +2139,8 @@ def get_attempt_review(
         question_text = None
         prompt_text = None
         reference_text = None
+        automatic_analysis = None
+        reviewed_analysis = None
 
         if etype == ExerciseType.MULTIPLE_CHOICE:
             mc_resp = mc_resp_repo.find_by_exercise_attempt_id(ea.id)
@@ -2184,6 +2200,7 @@ def get_attempt_review(
                     free_transcription_text=speaking_resp.free_transcription_text,
                     assessment_recognized_text=speaking_resp.assessment_recognized_text,
                     recognized_text=speaking_resp.recognized_text,
+                    reviewed_free_transcription_text=speaking_resp.reviewed_free_transcription_text,
                 )
             metrics = speaking_metrics_repo.find_by_speaking_response_id(speaking_resp.id if speaking_resp else None)
             if metrics:
@@ -2212,6 +2229,8 @@ def get_attempt_review(
                         "lexical_match": metrics.current_lexical_match,
                     },
                 )
+                automatic_analysis = comparison
+                reviewed_analysis = None
                 review_required = review.get("required", False)
                 review_reasons = review.get("reasons", [])
 
@@ -2232,6 +2251,7 @@ def get_attempt_review(
                     image_blob_path=writing_resp.image_blob_path,
                     image_url=image_url,
                     recognized_text=writing_resp.recognized_text,
+                    reviewed_recognized_text=writing_resp.reviewed_recognized_text,
                     original_filename=writing_resp.original_filename,
                     content_type=writing_resp.content_type,
                 )
@@ -2268,8 +2288,28 @@ def get_attempt_review(
                         "similarity_score": metrics.current_similarity_score,
                     },
                 )
+                automatic_analysis = {
+                    "recognized_text": writing_resp.recognized_text if writing_resp else None,
+                    "cer": metrics.cer,
+                    "wer": metrics.wer,
+                    "char_accuracy": (
+                        round(max(0.0, 100.0 * (1.0 - metrics.cer)), 2)
+                        if metrics.cer is not None
+                        else None
+                    ),
+                    "word_accuracy": (
+                        round(max(0.0, 100.0 * (1.0 - metrics.wer)), 2)
+                        if metrics.wer is not None
+                        else None
+                    ),
+                    "similarity_score": metrics.original_similarity_score
+                    if metrics.original_similarity_score is not None
+                    else metrics.similarity_score,
+                }
+                reviewed_analysis = None
 
         canonical = score_repo.find_by_exercise_attempt_id(ea.id)
+        reviewed_analysis = _reviewed_analysis(canonical) or reviewed_analysis
         score = _current_score(canonical)
         review_required = canonical.manual_review_required if canonical else True
         review_reasons = canonical.quality_reasons if canonical else ["MISSING_CANONICAL_SCORE"]
@@ -2299,6 +2339,9 @@ def get_attempt_review(
                 scoring_components=_current_scoring_components(canonical),
                 original_scoring_components=_original_scoring_components(canonical),
                 current_scoring_components=_current_scoring_components(canonical),
+                metric_sources=_metric_sources(canonical),
+                automatic_analysis=automatic_analysis,
+                reviewed_analysis=reviewed_analysis,
                 manual_adjustment_applied=canonical.manual_adjustment_applied if canonical else False,
                 review_status=_review_status(canonical),
                 teacher_observation=canonical.teacher_observation if canonical else None,

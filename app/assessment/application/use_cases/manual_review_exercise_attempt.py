@@ -17,6 +17,8 @@ from app.assessment.application.ports.repositories import (
     ExerciseAttemptRepository,
     ExerciseRepository,
     ExerciseScoreRepository,
+    ExpectedAnswerRepository,
+    PromptExerciseRepository,
     SpeakingMetricsRepository,
     SpeakingResponseRepository,
     TemplateExerciseRepository,
@@ -25,8 +27,10 @@ from app.assessment.application.ports.repositories import (
 )
 from app.assessment.domain.enums import ExerciseType, InterventionLevel, TechnicalStatus
 from app.assessment.domain.metrics import AssessmentResult, ExerciseScore, SpeakingMetrics, WritingMetrics
+from app.assessment.domain.text_comparison import compare_texts
 from app.assessment.domain.technical_quality import calculate_reading_score
 from app.assessment.domain.template import validate_template_exercise_points
+from app.assessment.domain.writing_text_comparison import determine_writing_review
 
 
 SPEAKING_REVIEW_METRICS = {
@@ -39,7 +43,12 @@ SPEAKING_REVIEW_METRICS = {
 WRITING_REVIEW_METRICS = {"char_accuracy", "word_accuracy"}
 MANUAL_REVIEW_ACTION_CONFIRM = "confirm"
 MANUAL_REVIEW_ACTION_OVERRIDE_METRICS = "override_metrics"
-MANUAL_REVIEW_ACTIONS = {MANUAL_REVIEW_ACTION_CONFIRM, MANUAL_REVIEW_ACTION_OVERRIDE_METRICS}
+MANUAL_REVIEW_ACTION_CORRECT_EVIDENCE = "correct_evidence"
+MANUAL_REVIEW_ACTIONS = {
+    MANUAL_REVIEW_ACTION_CONFIRM,
+    MANUAL_REVIEW_ACTION_OVERRIDE_METRICS,
+    MANUAL_REVIEW_ACTION_CORRECT_EVIDENCE,
+}
 
 
 @dataclass
@@ -47,6 +56,7 @@ class ManualReviewExerciseAttemptCommand:
     exercise_attempt_id: UUID
     teacher_id: UUID
     metrics: dict[str, float] | None = None
+    corrections: dict | None = None
     action: str = MANUAL_REVIEW_ACTION_OVERRIDE_METRICS
     teacher_observation: str | None = None
 
@@ -62,6 +72,7 @@ class ManualReviewExerciseAttemptResult:
     score_eligible: bool
     manual_adjustment_applied: bool
     review_status: str
+    metric_sources: dict | None
     teacher_observation: str | None
     adjusted_by_teacher_id: UUID | None
     adjusted_at: datetime | None
@@ -77,6 +88,8 @@ class ManualReviewExerciseAttemptUseCase:
         assessment_repo: AssessmentRepository,
         template_exercise_repo: TemplateExerciseRepository,
         exercise_repo: ExerciseRepository,
+        prompt_exercise_repo: PromptExerciseRepository,
+        expected_answer_repo: ExpectedAnswerRepository,
         exercise_score_repo: ExerciseScoreRepository,
         speaking_response_repo: SpeakingResponseRepository,
         speaking_metrics_repo: SpeakingMetricsRepository,
@@ -89,6 +102,8 @@ class ManualReviewExerciseAttemptUseCase:
         self._assessment_repo = assessment_repo
         self._template_exercise_repo = template_exercise_repo
         self._exercise_repo = exercise_repo
+        self._prompt_exercise_repo = prompt_exercise_repo
+        self._expected_answer_repo = expected_answer_repo
         self._exercise_score_repo = exercise_score_repo
         self._speaking_response_repo = speaking_response_repo
         self._speaking_metrics_repo = speaking_metrics_repo
@@ -131,15 +146,27 @@ class ManualReviewExerciseAttemptUseCase:
             )
             manual_adjustment_applied = False
             review_status = "confirmed"
-        elif exercise.type == ExerciseType.READING_SPEAKING:
+        elif action == MANUAL_REVIEW_ACTION_OVERRIDE_METRICS and exercise.type == ExerciseType.READING_SPEAKING:
             original_metrics, current_metrics, current_score, current_components = self._review_speaking(
                 exercise_attempt.id, command.metrics or {}
             )
             manual_adjustment_applied = True
             review_status = "overridden"
-        elif exercise.type == ExerciseType.READING_WRITING:
+        elif action == MANUAL_REVIEW_ACTION_OVERRIDE_METRICS and exercise.type == ExerciseType.READING_WRITING:
             original_metrics, current_metrics, current_score, current_components = self._review_writing(
                 exercise_attempt.id, command.metrics or {}
+            )
+            manual_adjustment_applied = True
+            review_status = "overridden"
+        elif action == MANUAL_REVIEW_ACTION_CORRECT_EVIDENCE and exercise.type == ExerciseType.READING_SPEAKING:
+            original_metrics, current_metrics, current_score, current_components, metric_sources = self._correct_speaking_evidence(
+                exercise.id, exercise_attempt.id, command.corrections
+            )
+            manual_adjustment_applied = True
+            review_status = "overridden"
+        elif action == MANUAL_REVIEW_ACTION_CORRECT_EVIDENCE and exercise.type == ExerciseType.READING_WRITING:
+            original_metrics, current_metrics, current_score, current_components, metric_sources = self._correct_writing_evidence(
+                exercise.id, exercise_attempt.id, command.corrections
             )
             manual_adjustment_applied = True
             review_status = "overridden"
@@ -147,6 +174,8 @@ class ManualReviewExerciseAttemptUseCase:
             raise InvalidExerciseTypeError(
                 "Manual metric review is only allowed for READING_SPEAKING and READING_WRITING exercises."
             )
+        if action != MANUAL_REVIEW_ACTION_CORRECT_EVIDENCE:
+            metric_sources = self._metric_sources_for_action(action, exercise.type, command.metrics or {})
 
         now = datetime.now(timezone.utc)
         score_eligible = existing_score.score_eligible or existing_score.technical_status == TechnicalStatus.PARTIAL
@@ -183,6 +212,7 @@ class ManualReviewExerciseAttemptUseCase:
                 current_scoring_components=updated_components,
                 manual_adjustment_applied=manual_adjustment_applied,
                 review_status=review_status,
+                metric_sources=metric_sources,
                 teacher_observation=teacher_observation,
                 adjusted_by_teacher_id=command.teacher_id,
                 adjusted_at=now,
@@ -200,6 +230,7 @@ class ManualReviewExerciseAttemptUseCase:
             score_eligible=updated_score.score_eligible,
             manual_adjustment_applied=updated_score.manual_adjustment_applied,
             review_status=self._review_status(updated_score),
+            metric_sources=updated_score.metric_sources,
             teacher_observation=updated_score.teacher_observation,
             adjusted_by_teacher_id=updated_score.adjusted_by_teacher_id,
             adjusted_at=updated_score.adjusted_at,
@@ -281,6 +312,77 @@ class ManualReviewExerciseAttemptUseCase:
         self._speaking_metrics_repo.update(metrics)
         return original, current, score, components
 
+    def _correct_speaking_evidence(
+        self,
+        exercise_id: UUID,
+        exercise_attempt_id: UUID,
+        corrections: dict | None,
+    ) -> tuple[dict[str, float | None], dict[str, float | None], float, dict, dict]:
+        reviewed_text = self._string_correction(
+            corrections, "free_transcription_text", allow_empty=False
+        )
+        expected_text = self._expected_text_for_exercise(exercise_id)
+        response = self._speaking_response_repo.find_by_exercise_attempt_id(exercise_attempt_id)
+        if not response:
+            raise InvalidExerciseTypeError("Speaking response not found for manual review.")
+        metrics = self._speaking_metrics_repo.find_by_speaking_response_id(response.id)
+        if not metrics:
+            raise InvalidExerciseTypeError("Speaking metrics not found for manual review.")
+
+        comparison = compare_texts(expected_text, reviewed_text).to_dict()
+        lexical_match = comparison.get("lexical_match_percentage")
+        original = {
+            "accuracy_score": metrics.original_accuracy_score if metrics.original_accuracy_score is not None else metrics.accuracy_score,
+            "fluency_score": metrics.original_fluency_score if metrics.original_fluency_score is not None else metrics.fluency_score,
+            "pronunciation_score": metrics.original_pronunciation_score if metrics.original_pronunciation_score is not None else metrics.pronunciation_score,
+            "completeness_score": metrics.original_completeness_score if metrics.original_completeness_score is not None else metrics.completeness_score,
+            "lexical_match": metrics.original_lexical_match if metrics.original_lexical_match is not None else (metrics.comparison_json or {}).get("lexical_match_percentage"),
+        }
+        current = {
+            "accuracy_score": metrics.current_accuracy_score if metrics.current_accuracy_score is not None else metrics.accuracy_score,
+            "fluency_score": metrics.current_fluency_score if metrics.current_fluency_score is not None else metrics.fluency_score,
+            "pronunciation_score": metrics.current_pronunciation_score if metrics.current_pronunciation_score is not None else metrics.pronunciation_score,
+            "completeness_score": metrics.current_completeness_score if metrics.current_completeness_score is not None else metrics.completeness_score,
+            "lexical_match": lexical_match,
+        }
+        score, components = calculate_reading_score(
+            pronunciation_score=current["pronunciation_score"],
+            accuracy_score=current["accuracy_score"],
+            fluency_score=current["fluency_score"],
+            completeness_score=current["completeness_score"],
+            lexical_match=current["lexical_match"],
+        )
+        if score is None:
+            raise InvalidExerciseTypeError("At least one speaking metric is required to calculate current_score.")
+
+        response.reviewed_free_transcription_text = reviewed_text
+        self._speaking_response_repo.update(response)
+        metrics.original_accuracy_score = original["accuracy_score"]
+        metrics.original_fluency_score = original["fluency_score"]
+        metrics.original_pronunciation_score = original["pronunciation_score"]
+        metrics.original_completeness_score = original["completeness_score"]
+        metrics.original_lexical_match = original["lexical_match"]
+        metrics.current_accuracy_score = current["accuracy_score"]
+        metrics.current_fluency_score = current["fluency_score"]
+        metrics.current_pronunciation_score = current["pronunciation_score"]
+        metrics.current_completeness_score = current["completeness_score"]
+        metrics.current_lexical_match = lexical_match
+        self._speaking_metrics_repo.update(metrics)
+
+        components = {
+            **components,
+            "reviewed_analysis": comparison,
+            "reviewed_free_transcription_text": reviewed_text,
+        }
+        metric_sources = {
+            "accuracy_score": "automatic",
+            "fluency_score": "automatic",
+            "pronunciation_score": "automatic",
+            "completeness_score": "automatic",
+            "lexical_match": "recalculated_from_reviewed_evidence",
+        }
+        return original, current, score, components, metric_sources
+
     def _speaking_metric_snapshots(
         self, exercise_attempt_id: UUID
     ) -> tuple[dict[str, float | None], dict[str, float | None]]:
@@ -354,6 +456,71 @@ class ManualReviewExerciseAttemptUseCase:
             "similarity_score": current_similarity,
         }
         return original, {**current, "similarity_score": current_similarity}, current_similarity, components
+
+    def _correct_writing_evidence(
+        self,
+        exercise_id: UUID,
+        exercise_attempt_id: UUID,
+        corrections: dict | None,
+    ) -> tuple[dict[str, float | None], dict[str, float | None], float, dict, dict]:
+        reviewed_text = self._string_correction(corrections, "recognized_text", allow_empty=False)
+        expected_text = self._expected_text_for_exercise(exercise_id)
+        response = self._writing_response_repo.find_by_exercise_attempt_id(exercise_attempt_id)
+        if not response:
+            raise InvalidExerciseTypeError("Writing response not found for manual review.")
+        metrics = self._writing_metrics_repo.find_by_writing_response_id(response.id)
+        if not metrics:
+            raise InvalidExerciseTypeError("Writing metrics not found for manual review.")
+
+        review = determine_writing_review(expected_text, reviewed_text, confidence_avg=metrics.confidence_avg)
+        original = {
+            "char_accuracy": metrics.original_char_accuracy if metrics.original_char_accuracy is not None else self._char_accuracy_from_cer(metrics.cer),
+            "word_accuracy": metrics.original_word_accuracy if metrics.original_word_accuracy is not None else self._word_accuracy_from_wer(metrics.wer),
+            "similarity_score": metrics.original_similarity_score if metrics.original_similarity_score is not None else metrics.similarity_score,
+        }
+        current = {
+            "char_accuracy": review.char_accuracy,
+            "word_accuracy": review.word_accuracy,
+            "similarity_score": review.similarity_score,
+        }
+
+        response.reviewed_recognized_text = reviewed_text
+        self._writing_response_repo.update(response)
+        metrics.original_char_accuracy = original["char_accuracy"]
+        metrics.original_word_accuracy = original["word_accuracy"]
+        metrics.original_similarity_score = original["similarity_score"]
+        metrics.current_char_accuracy = current["char_accuracy"]
+        metrics.current_word_accuracy = current["word_accuracy"]
+        metrics.current_similarity_score = current["similarity_score"]
+        metrics.similarity_score = current["similarity_score"]
+        self._writing_metrics_repo.update(metrics)
+
+        reviewed_analysis = {
+            "recognized_text": reviewed_text,
+            "cer": review.cer,
+            "wer": review.wer,
+            "char_accuracy": review.char_accuracy,
+            "word_accuracy": review.word_accuracy,
+            "similarity_score": review.similarity_score,
+            "review_required": review.review_required,
+            "review_reasons": review.review_reasons,
+        }
+        components = {
+            "formula_version": "phase2_v1",
+            "formula": "0.75_char_accuracy + 0.25_word_accuracy",
+            "component_weights": {"char_accuracy": 0.75, "word_accuracy": 0.25},
+            "char_accuracy": current["char_accuracy"],
+            "word_accuracy": current["word_accuracy"],
+            "similarity_score": current["similarity_score"],
+            "reviewed_analysis": reviewed_analysis,
+            "reviewed_recognized_text": reviewed_text,
+        }
+        metric_sources = {
+            "char_accuracy": "recalculated_from_reviewed_evidence",
+            "word_accuracy": "recalculated_from_reviewed_evidence",
+            "similarity_score": "recalculated_from_reviewed_evidence",
+        }
+        return original, current, current["similarity_score"], components, metric_sources
 
     def _writing_metric_snapshots(
         self, exercise_attempt_id: UUID
@@ -540,6 +707,7 @@ class ManualReviewExerciseAttemptUseCase:
             "technical_status": score.technical_status.value if score else "INVALID",
             "manual_review_required": score.manual_review_required if score else True,
             "review_status": ManualReviewExerciseAttemptUseCase._review_status(score),
+            "metric_sources": score.metric_sources if score else None,
             "quality_reasons": score.quality_reasons if score else ["MISSING_CANONICAL_SCORE"],
             "scoring_components": current_components,
             "original_scoring_components": original_components,
@@ -684,3 +852,48 @@ class ManualReviewExerciseAttemptUseCase:
         if not teacher_observation or not teacher_observation.strip():
             raise InvalidExerciseTypeError("teacher_observation is required for manual review.")
         return teacher_observation.strip()
+
+    @staticmethod
+    def _metric_sources_for_action(action: str, exercise_type: ExerciseType, metrics: dict[str, float]) -> dict | None:
+        if action == MANUAL_REVIEW_ACTION_CONFIRM:
+            return None
+        if action != MANUAL_REVIEW_ACTION_OVERRIDE_METRICS:
+            return None
+        if exercise_type == ExerciseType.READING_SPEAKING:
+            names = SPEAKING_REVIEW_METRICS
+        elif exercise_type == ExerciseType.READING_WRITING:
+            names = WRITING_REVIEW_METRICS | {"similarity_score"}
+        else:
+            return None
+        return {
+            name: "teacher_override" if name in metrics else "automatic"
+            for name in sorted(names)
+        }
+
+    def _expected_text_for_exercise(self, exercise_id: UUID) -> str:
+        prompt = self._prompt_exercise_repo.find_by_exercise_id(exercise_id)
+        expected = self._expected_answer_repo.find_by_prompt_exercise_id(prompt.id) if prompt else None
+        expected_text = expected.expected_text if expected else (prompt.text_to_show if prompt else None)
+        if not expected_text:
+            raise InvalidExerciseTypeError("Expected text not found for manual review.")
+        return expected_text
+
+    @staticmethod
+    def _string_correction(corrections: dict | None, key: str, *, allow_empty: bool) -> str:
+        if not isinstance(corrections, dict) or key not in corrections:
+            raise InvalidExerciseTypeError(f"corrections.{key} is required for correct_evidence.")
+        value = corrections[key]
+        if not isinstance(value, str):
+            raise InvalidExerciseTypeError(f"corrections.{key} must be a string.")
+        value = value.strip()
+        if not allow_empty and not value:
+            raise InvalidExerciseTypeError(f"corrections.{key} must not be empty.")
+        return value
+
+    @staticmethod
+    def _char_accuracy_from_cer(cer: float | None) -> float | None:
+        return round(max(0.0, 100.0 * (1.0 - cer)), 2) if cer is not None else None
+
+    @staticmethod
+    def _word_accuracy_from_wer(wer: float | None) -> float | None:
+        return round(max(0.0, 100.0 * (1.0 - wer)), 2) if wer is not None else None

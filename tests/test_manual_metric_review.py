@@ -25,6 +25,7 @@ from app.assessment.domain.enums import (
 )
 from app.assessment.domain.exercise import AssessmentExercise
 from app.assessment.domain.metrics import AssessmentResult, ExerciseScore, SpeakingMetrics, WritingMetrics
+from app.assessment.domain.prompt import ExpectedAnswer, PromptExercise
 from app.assessment.domain.response import SpeakingResponse, WritingResponse
 from app.assessment.domain.template import AssessmentTemplateExercise
 from app.assessment.presentation.routes import (
@@ -158,6 +159,77 @@ def test_manual_review_writing_snapshot_components_are_siblings_and_clean():
     assert snapshot_row["current_scoring_components"]["similarity_score"] == 75.0
     assert snapshot_row["current_scoring_components"]["manual_adjustment_applied"] is True
     assert snapshot_row["teacher_observation"] == "Ajuste de escritura."
+
+
+def test_manual_review_correct_writing_evidence_recalculates_current_metrics_only():
+    fixture = _writing_fixture()
+    response_before = fixture.writing_response_repo.item
+    raw_ocr = fixture.writing_metrics_repo.item.raw_ocr_result_json
+
+    result = fixture.use_case.execute(
+        ManualReviewExerciseAttemptCommand(
+            exercise_attempt_id=fixture.exercise_attempt_id,
+            teacher_id=fixture.teacher_id,
+            action="correct_evidence",
+            corrections={"recognized_text": "EL PERRO CORRE"},
+            teacher_observation="La imagen muestra claramente PERRO.",
+        )
+    )
+
+    metrics = fixture.writing_metrics_repo.item
+    score = fixture.score_repo.item
+    assert response_before.recognized_text == "EL PERO CORRE"
+    assert fixture.writing_response_repo.item.reviewed_recognized_text == "EL PERRO CORRE"
+    assert metrics.raw_ocr_result_json == raw_ocr
+    assert metrics.original_similarity_score == 87.25
+    assert metrics.current_similarity_score == 100.0
+    assert metrics.current_char_accuracy == 100.0
+    assert metrics.current_word_accuracy == 100.0
+    assert score.current_score == 100.0
+    assert score.manual_adjustment_applied is True
+    assert score.review_status == "overridden"
+    assert score.metric_sources == {
+        "char_accuracy": "recalculated_from_reviewed_evidence",
+        "word_accuracy": "recalculated_from_reviewed_evidence",
+        "similarity_score": "recalculated_from_reviewed_evidence",
+    }
+    assert result.current_metrics["similarity_score"] == 100.0
+    assert fixture.result_repo.item.current_final_score == 100.0
+    assert fixture.result_repo.item.original_final_score == 87.25
+
+
+def test_manual_review_correct_speaking_evidence_recalculates_lexical_only():
+    fixture = _fixture(TechnicalStatus.VALID, score_eligible=True, with_result=True)
+    response_before = fixture.speaking_response_repo.item
+    metrics_before = fixture.speaking_metrics_repo.item
+
+    result = fixture.use_case.execute(
+        ManualReviewExerciseAttemptCommand(
+            exercise_attempt_id=fixture.exercise_attempt_id,
+            teacher_id=fixture.teacher_id,
+            action="correct_evidence",
+            corrections={"free_transcription_text": "EL PERRO CORRE"},
+            teacher_observation="Se corrige la transcripción tras escuchar el audio.",
+        )
+    )
+
+    metrics = fixture.speaking_metrics_repo.item
+    score = fixture.score_repo.item
+    assert response_before.free_transcription_text == "EL PERO CORRE"
+    assert response_before.recognized_text == "EL PERO CORRE"
+    assert fixture.speaking_response_repo.item.reviewed_free_transcription_text == "EL PERRO CORRE"
+    assert metrics.raw_speech_result_json == {"provider": "azure"}
+    assert metrics.raw_transcription_result_json == {"provider": "whisper"}
+    assert metrics.current_accuracy_score == metrics_before.current_accuracy_score == 50
+    assert metrics.current_fluency_score == metrics_before.current_fluency_score == 50
+    assert metrics.current_pronunciation_score == metrics_before.current_pronunciation_score == 50
+    assert metrics.current_completeness_score == metrics_before.current_completeness_score == 50
+    assert metrics.current_lexical_match == 100.0
+    assert score.current_score == 57.5
+    assert score.metric_sources["lexical_match"] == "recalculated_from_reviewed_evidence"
+    assert score.metric_sources["accuracy_score"] == "automatic"
+    assert result.current_metrics["lexical_match"] == 100.0
+    assert fixture.result_repo.item.current_final_score == 57.5
 
 
 def test_result_serialization_cleans_nested_original_components_in_snapshot_and_summaries():
@@ -376,6 +448,29 @@ def test_manual_review_validates_action_payloads():
             )
         )
 
+    with pytest.raises(InvalidExerciseTypeError, match="corrections.free_transcription_text is required"):
+        fixture.use_case.execute(
+            ManualReviewExerciseAttemptCommand(
+                exercise_attempt_id=fixture.exercise_attempt_id,
+                teacher_id=fixture.teacher_id,
+                action="correct_evidence",
+                corrections={},
+                teacher_observation="Intento sin corrección.",
+            )
+        )
+
+    writing = _writing_fixture()
+    with pytest.raises(InvalidExerciseTypeError, match="corrections.recognized_text must not be empty"):
+        writing.use_case.execute(
+            ManualReviewExerciseAttemptCommand(
+                exercise_attempt_id=writing.exercise_attempt_id,
+                teacher_id=writing.teacher_id,
+                action="correct_evidence",
+                corrections={"recognized_text": "  "},
+                teacher_observation="Intento vacío.",
+            )
+        )
+
 
 def test_manual_review_status_backfill_sql_maps_existing_flags():
     migration_path = (
@@ -440,6 +535,7 @@ class _Fixture:
         exercise_id = uuid4()
         attempt_id = uuid4()
         speaking_response_id = uuid4()
+        prompt_id = uuid4()
         self.attempt_id = attempt_id
 
         self.speaking_metrics_repo = _SingleRepo(
@@ -451,7 +547,8 @@ class _Fixture:
                 fluency_score=50,
                 completeness_score=50,
                 prosody_score=None,
-                raw_speech_result_json=None,
+                raw_speech_result_json={"provider": "azure"},
+                raw_transcription_result_json={"provider": "whisper"},
                 comparison_json={"lexical_match_percentage": 50},
                 review_json=None,
                 quality_json=None,
@@ -591,6 +688,21 @@ class _Fixture:
                 )
             )
         self.score_repo = _ScoreRepo(scores)
+        self.speaking_response_repo = _ExerciseResponseRepo(
+            SpeakingResponse(
+                id=speaking_response_id,
+                exercise_attempt_id=self.exercise_attempt_id,
+                audio_blob_path="audio.wav",
+                original_filename=None,
+                content_type=None,
+                duration_ms=None,
+                recognized_text="EL PERO CORRE",
+                free_transcription_text="EL PERO CORRE",
+                assessment_recognized_text="EL PERO CORRE",
+                created_at=now,
+                updated_at=now,
+            )
+        )
         self.result_repo = _ResultRepo(
             AssessmentResult(
                 id=uuid4(),
@@ -651,20 +763,30 @@ class _Fixture:
             ),
             template_exercise_repo=_MapRepo(template_exercises),
             exercise_repo=_MapRepo(exercises),
-            exercise_score_repo=self.score_repo,
-            speaking_response_repo=_ExerciseResponseRepo(
-                SpeakingResponse(
-                    id=speaking_response_id,
-                    exercise_attempt_id=self.exercise_attempt_id,
-                    audio_blob_path="audio.wav",
-                    original_filename=None,
-                    content_type=None,
-                    duration_ms=None,
-                    recognized_text=None,
+            prompt_exercise_repo=_PromptRepo(
+                PromptExercise(
+                    id=prompt_id,
+                    exercise_id=exercise_id,
+                    prompt_text=None,
+                    text_to_show="EL PERRO CORRE",
+                    audio_blob_path=None,
+                    image_blob_path=None,
+                    language_code="es-PE",
                     created_at=now,
                     updated_at=now,
                 )
             ),
+            expected_answer_repo=_ExpectedRepo(
+                ExpectedAnswer(
+                    id=uuid4(),
+                    prompt_exercise_id=prompt_id,
+                    expected_text="EL PERRO CORRE",
+                    created_at=now,
+                    updated_at=now,
+                )
+            ),
+            exercise_score_repo=self.score_repo,
+            speaking_response_repo=self.speaking_response_repo,
             speaking_metrics_repo=self.speaking_metrics_repo,
             writing_response_repo=_EmptyRepo(),
             writing_metrics_repo=_EmptyRepo(),
@@ -699,6 +821,7 @@ class _WritingFixture:
         exercise_id = uuid4()
         attempt_id = uuid4()
         writing_response_id = uuid4()
+        prompt_id = uuid4()
 
         self.writing_metrics_repo = _SingleRepo(
             WritingMetrics(
@@ -708,7 +831,7 @@ class _WritingFixture:
                 cer=0.059,
                 wer=0.333,
                 similarity_score=87.25,
-                raw_ocr_result_json=None,
+                raw_ocr_result_json={"provider": "azure_vision"},
                 created_at=now,
                 updated_at=now,
                 original_char_accuracy=94.1,
@@ -756,6 +879,18 @@ class _WritingFixture:
             )
         ]
         self.score_repo = _ScoreRepo([primary_score])
+        self.writing_response_repo = _ExerciseResponseRepo(
+            WritingResponse(
+                id=writing_response_id,
+                exercise_attempt_id=self.exercise_attempt_id,
+                image_blob_path="writing.png",
+                original_filename=None,
+                content_type=None,
+                recognized_text="EL PERO CORRE",
+                created_at=now,
+                updated_at=now,
+            )
+        )
         self.result_repo = _ResultRepo(
             AssessmentResult(
                 id=uuid4(),
@@ -843,21 +978,32 @@ class _WritingFixture:
                     )
                 }
             ),
-            exercise_score_repo=self.score_repo,
-            speaking_response_repo=_EmptyRepo(),
-            speaking_metrics_repo=_EmptyRepo(),
-            writing_response_repo=_ExerciseResponseRepo(
-                WritingResponse(
-                    id=writing_response_id,
-                    exercise_attempt_id=self.exercise_attempt_id,
-                    image_blob_path="writing.png",
-                    original_filename=None,
-                    content_type=None,
-                    recognized_text=None,
+            prompt_exercise_repo=_PromptRepo(
+                PromptExercise(
+                    id=prompt_id,
+                    exercise_id=exercise_id,
+                    prompt_text=None,
+                    text_to_show="EL PERRO CORRE",
+                    audio_blob_path=None,
+                    image_blob_path=None,
+                    language_code="es-PE",
                     created_at=now,
                     updated_at=now,
                 )
             ),
+            expected_answer_repo=_ExpectedRepo(
+                ExpectedAnswer(
+                    id=uuid4(),
+                    prompt_exercise_id=prompt_id,
+                    expected_text="EL PERRO CORRE",
+                    created_at=now,
+                    updated_at=now,
+                )
+            ),
+            exercise_score_repo=self.score_repo,
+            speaking_response_repo=_EmptyRepo(),
+            speaking_metrics_repo=_EmptyRepo(),
+            writing_response_repo=self.writing_response_repo,
             writing_metrics_repo=self.writing_metrics_repo,
             result_repo=self.result_repo,
         )
@@ -900,6 +1046,26 @@ class _ExerciseResponseRepo:
 
     def find_by_exercise_attempt_id(self, exercise_attempt_id: UUID):
         return self.item if self.item.exercise_attempt_id == exercise_attempt_id else None
+
+    def update(self, item):
+        self.item = item
+        return item
+
+
+class _PromptRepo:
+    def __init__(self, item: PromptExercise) -> None:
+        self.item = item
+
+    def find_by_exercise_id(self, exercise_id: UUID):
+        return self.item if self.item.exercise_id == exercise_id else None
+
+
+class _ExpectedRepo:
+    def __init__(self, item: ExpectedAnswer) -> None:
+        self.item = item
+
+    def find_by_prompt_exercise_id(self, prompt_exercise_id: UUID):
+        return self.item if self.item.prompt_exercise_id == prompt_exercise_id else None
 
 
 class _SingleRepo:
