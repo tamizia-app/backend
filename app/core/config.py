@@ -59,6 +59,14 @@ class Settings(BaseSettings):
     whisper_model_download_root: str | None = None
     whisper_low_confidence_threshold: float = -1.0
 
+    crisper_model_size: str = "medium"
+    crisper_mode: Literal["verbatim", "intended"] = "verbatim"
+    crisper_device: str = "cpu"
+    crisper_compute_type: str = "float32"
+    crisper_language: str = "es"
+    crisper_word_timestamps: bool = True
+    crisper_model_download_root: str | None = None
+
 
 @lru_cache
 def get_settings() -> Settings:

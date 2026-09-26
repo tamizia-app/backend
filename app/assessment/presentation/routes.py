@@ -93,9 +93,8 @@ from app.assessment.infrastructure.adapters.azure_speech import (
 from app.assessment.infrastructure.adapters.azure_vision_ocr import (
     AzureVisionOcrAdapter,
 )
-from app.assessment.infrastructure.adapters.faster_whisper_stt import (
-    FasterWhisperSpeechToTextAdapter,
-    WhisperConfig,
+from app.assessment.infrastructure.adapters.speech_to_text_factory import (
+    build_speech_to_text_service,
 )
 from app.assessment.infrastructure.audio_processing import (
     AssessmentAudioProcessor,
@@ -1483,12 +1482,12 @@ async def upload_speaking_response(
         raise HTTPException(status_code=400, detail="Audio file exceeds 20 MB limit")
 
     settings = get_settings()
-    whisper_config = WhisperConfig.from_settings(settings)
+    stt_service, low_confidence_threshold = build_speech_to_text_service(settings)
     pipeline = AssessReadingPipelineUseCase(
         audio_processor=AssessmentAudioProcessor(),
-        stt_service=FasterWhisperSpeechToTextAdapter(whisper_config),
+        stt_service=stt_service,
         pronunciation_service=AzureSpeechPronunciationAssessmentService(settings),
-        low_logprob_threshold=whisper_config.low_confidence_threshold,
+        low_logprob_threshold=low_confidence_threshold,
     )
 
     uc = UploadSpeakingResponseUseCase(
@@ -2721,14 +2720,15 @@ async def dev_pronunciation_assessment(
     if not reference_text.strip():
         raise HTTPException(status_code=422, detail="Expected text must not be empty")
     try:
-        whisper_config = WhisperConfig.from_settings(get_settings())
+        settings = get_settings()
+        stt_service, low_confidence_threshold = build_speech_to_text_service(settings)
         pipeline = AssessReadingPipelineUseCase(
             audio_processor=AssessmentAudioProcessor(),
-            stt_service=FasterWhisperSpeechToTextAdapter(whisper_config),
+            stt_service=stt_service,
             pronunciation_service=AzureSpeechPronunciationAssessmentService(
-                get_settings()
+                settings
             ),
-            low_logprob_threshold=whisper_config.low_confidence_threshold,
+            low_logprob_threshold=low_confidence_threshold,
         )
         response = await pipeline.execute(
             AssessReadingCommand(

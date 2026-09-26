@@ -7,7 +7,9 @@ fluency, completeness, word, phoneme, offset, and duration metrics. Its
 scripted recognizer is conditioned by the reference text, so its transcript is
 retained as diagnostic information and is not treated as neutral ASR.
 
-`faster-whisper` runs locally and independently. It never receives the expected
+The local ASR provider runs independently. The default provider remains
+`faster-whisper`, and `CrisperWhisper 2.0` can be enabled for more literal
+Spanish child-speech transcription. The local ASR never receives the expected
 text as an initial prompt, hotword, correction source, or fallback. Its
 transcript is compared with the expected text by dynamic-programming word
 alignment:
@@ -18,11 +20,11 @@ WER = (substitutions + omissions + insertions) / expected word count
 
 The response therefore separates:
 
-- `recognized_text` and `stt_recognized_text`: local faster-whisper output.
+- `recognized_text` and `stt_recognized_text`: local ASR output.
 - `assessment_recognized_text`: Azure's reference-conditioned transcript.
 - `assessment_display_text` and `assessment_lexical_text`: detailed Azure data.
 - `pronunciation_assessment`: metrics returned by Azure only.
-- `comparison`: expected text versus faster-whisper only.
+- `comparison`: expected text versus local ASR only.
 
 ## Processing flow
 
@@ -31,7 +33,7 @@ uploaded audio
     |
     +-- one temporary normalization: PCM s16le / mono / 16 kHz
             |
-            +-- faster-whisper local ASR (worker thread)
+            +-- local ASR: faster-whisper or CrisperWhisper (worker thread)
             |
             +-- Azure scripted Pronunciation Assessment (worker thread)
 ```
@@ -61,27 +63,43 @@ WHISPER_MODEL_DOWNLOAD_ROOT=
 WHISPER_LOW_CONFIDENCE_THRESHOLD=-1.0
 ```
 
+CrisperWhisper CPU configuration:
+
+```env
+ASSESSMENT_STT_PROVIDER=crisper_whisper
+CRISPER_MODEL_SIZE=medium
+CRISPER_MODE=verbatim
+CRISPER_DEVICE=cpu
+CRISPER_COMPUTE_TYPE=float32
+CRISPER_LANGUAGE=es
+CRISPER_WORD_TIMESTAMPS=true
+CRISPER_MODEL_DOWNLOAD_ROOT=
+WHISPER_LOW_CONFIDENCE_THRESHOLD=-1.0
+```
+
 For a CUDA deployment, set `WHISPER_DEVICE=cuda` and
 `WHISPER_COMPUTE_TYPE=float16` after verifying compatible NVIDIA drivers and
 CTranslate2 runtime libraries.
 
-The model is loaded lazily and cached once per process and configuration. It is
-not loaded during API startup and is not loaded per request. Each
+The local ASR model is loaded lazily and cached once per process and
+configuration. It is not loaded during API startup and is not loaded per request. Each
 Uvicorn/Gunicorn worker has a separate Python process and therefore its own
 model copy. The first request can be substantially slower because it may
 download and load model files.
 
-`small` generally needs materially more CPU time and memory than `tiny` or
-`base`. Worker count must be selected with the model's resident memory in mind;
-many workers can multiply RAM consumption.
+For faster-whisper, `small` generally needs materially more CPU time and memory
+than `tiny` or `base`. CrisperWhisper `medium` uses PyTorch/Transformers and is
+slower on CPU than the current faster-whisper `base`, but preserves more
+disfluencies in the lab samples. Worker count must be selected with the model's
+resident memory in mind; many workers can multiply RAM consumption.
 
 ## Manual review
 
 `review.required` is a transparent quality flag, not a clinical decision. It
 can be enabled by:
 
-- empty ASR output or high `no_speech_prob`;
-- low segment log probability or low mean word probability;
+- empty ASR output or high `no_speech_prob` when the provider exposes it;
+- low segment log probability or low mean word probability when available;
 - very short audio or poor segment-duration coverage;
 - invalid timestamps or obvious repeated words;
 - large Whisper/Azure transcript divergence;
@@ -89,16 +107,17 @@ can be enabled by:
 
 Reasons are returned as stable codes such as `LOW_ASR_QUALITY`,
 `ASR_AZURE_TRANSCRIPT_DIVERGENCE`, and `PRONUNCIATION_PROVIDER_FAILED`.
-`confidence_heuristic` remains `null`; faster-whisper does not expose a
-calibrated utterance-level confidence.
+`confidence_heuristic` remains `null`; neither supported local ASR provider
+exposes a calibrated utterance-level confidence.
 
 ## Limitations
 
 Neither provider is ground truth. Child speech, background noise, regional
 accents, very short utterances, invented words, pseudowords, and early-literacy
 pronunciations can reduce ASR accuracy. Azure scripted results remain
-reference-conditioned, while Whisper can hallucinate or normalize unexpected
-speech. Human review remains necessary for ambiguous cases.
+reference-conditioned, while local ASR can hallucinate, normalize, or preserve
+unexpected speech depending on the provider and mode. Human review remains
+necessary for ambiguous cases.
 
 The pipeline evaluates reading signals only. It must not be interpreted as a
 diagnosis of dyslexia or any other clinical or educational condition.

@@ -27,6 +27,14 @@ from app.assessment.infrastructure.adapters.faster_whisper_stt import (
     FasterWhisperSpeechToTextAdapter,
     WhisperConfig,
 )
+from app.assessment.infrastructure.adapters.crisper_whisper_stt import (
+    CrisperWhisperConfig,
+    CrisperWhisperModelProvider,
+    CrisperWhisperSpeechToTextAdapter,
+)
+from app.assessment.infrastructure.adapters.speech_to_text_factory import (
+    build_speech_to_text_service,
+)
 
 
 def _word(text: str, start: float, end: float, probability: float = 0.9):
@@ -206,6 +214,69 @@ def test_repeated_transcriptions_do_not_reload_model():
     asyncio.run(twice())
     assert len(loads) == 1
     assert model.transcribe.call_count == 2
+
+
+def test_crisper_whisper_returns_port_compatible_transcription():
+    model = MagicMock()
+    model.transcribe.return_value = SimpleNamespace(
+        text="Pablo pome un palto de babanca- banca",
+        language="es",
+        duration=5.4,
+        processing_time=1.2,
+        words=[
+            SimpleNamespace(word="Pablo", start=0.1, end=0.8),
+            SimpleNamespace(word="pome", start=1.0, end=1.3),
+            SimpleNamespace(word="babanca-", start=3.1, end=3.6),
+            SimpleNamespace(word="banca", start=3.8, end=4.2),
+        ],
+    )
+    CrisperWhisperModelProvider.clear_cache()
+    provider = CrisperWhisperModelProvider(model_factory=lambda *args, **kwargs: model)
+    adapter = CrisperWhisperSpeechToTextAdapter(
+        CrisperWhisperConfig(provider="crisper_whisper"),
+        provider,
+    )
+
+    result = asyncio.run(adapter.transcribe("normalized.wav"))
+
+    assert result.provider == "crisper_whisper"
+    assert result.model == "nyralabs/CrisperWhisper2.0_medium"
+    assert result.text == "Pablo pome un palto de babanca- banca"
+    assert result.language == "es"
+    assert result.language_probability is None
+    assert result.segments[0].avg_logprob is None
+    assert result.segments[0].no_speech_prob is None
+    assert result.segments[0].start_seconds == 0.1
+    assert result.segments[0].end_seconds == 4.2
+    assert result.segments[0].words[2].text == "babanca-"
+    assert result.segments[0].words[2].probability is None
+    assert result.processing_time_ms is not None
+    assert result.real_time_factor is not None
+    model.transcribe.assert_called_once_with(
+        "normalized.wav",
+        language="es",
+        mode="verbatim",
+        word_timestamps=True,
+    )
+
+
+def test_stt_factory_selects_crisper_from_settings():
+    from app.core.config import Settings
+
+    settings = Settings(
+        _env_file=None,
+        assessment_stt_provider="crisper_whisper",
+        crisper_model_size="turbo",
+        crisper_mode="verbatim",
+        crisper_device="cpu",
+        crisper_compute_type="float32",
+    )
+
+    service, low_confidence_threshold = build_speech_to_text_service(settings)
+
+    assert isinstance(service, CrisperWhisperSpeechToTextAdapter)
+    assert service.config.model_id == "nyralabs/CrisperWhisper2.0_turbo"
+    assert low_confidence_threshold == settings.whisper_low_confidence_threshold
 
 
 class _Metadata:

@@ -155,7 +155,8 @@ class AssessReadingPipelineUseCase:
             else None
         )
         if comparison is not None:
-            comparison["source"] = "expected_text_vs_faster_whisper"
+            provider = transcription.provider if transcription else "stt"
+            comparison["source"] = f"expected_text_vs_{provider}"
 
         azure_text = assessment.recognized_text if assessment else None
         audio_duration_seconds = (

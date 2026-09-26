@@ -103,6 +103,20 @@ AZURE_VISION_ENDPOINT=
 AZURE_VISION_KEY=
 AZURE_SPEECH_KEY=
 AZURE_SPEECH_REGION=
+
+# STT local para speaking/reading
+ASSESSMENT_STT_PROVIDER=faster_whisper
+WHISPER_MODEL_SIZE=base
+WHISPER_DEVICE=cpu
+WHISPER_COMPUTE_TYPE=int8
+
+# Alternativa literal para habla infantil
+# ASSESSMENT_STT_PROVIDER=crisper_whisper
+# CRISPER_MODEL_SIZE=medium
+# CRISPER_MODE=verbatim
+# CRISPER_DEVICE=cpu
+# CRISPER_COMPUTE_TYPE=float32
+# CRISPER_WORD_TIMESTAMPS=true
 ```
 
 ## Password reset (desarrollo)

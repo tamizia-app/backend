@@ -13,6 +13,7 @@ dependencies = [
   "azure-ai-vision-imageanalysis>=1.0.0",
   "azure-cognitiveservices-speech>=1.41.1",
   "azure-storage-blob>=12.24.0",
+  "crisperwhisper[transformers]==2.0.3",
   "email-validator>=2.2.0",
   "fastapi>=0.115.6",
   "faster-whisper>=1.2.1,<2",
@@ -25,6 +26,7 @@ dependencies = [
   "python-multipart>=0.0.20",
   "reportlab>=4.3.0",
   "SQLAlchemy>=2.0.36",
+  "transformers>=4.40,<5",
   "uvicorn[standard]>=0.34.0",
 ]
 
